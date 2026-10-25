@@ -276,6 +276,27 @@ function renderPlan({ weeks, days, runningBlock }) {
   show();
 }
 
+// Who changed the plan, what and why (from plan_changes), newest first.
+function renderPlanChanges(changes) {
+  const fmtVal = (o) => Object.entries(o ?? {}).map(([k, v]) => `${k.replace(/_/g, " ")}: ${v ?? "—"}`).join(", ");
+  $("changesSummary").textContent = `Plan change log${changes.length ? ` (${changes.length} recent)` : ""}`;
+  $("planChanges").innerHTML = changes.length ? changes.map((c) => `
+    <div class="row">
+      <div class="row-date"><b>${relDay(c.at.slice(0, 10))}</b>${new Date(c.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}</div>
+      <div class="row-main">
+        <div class="row-title">${esc(c.action.replace(/_/g, " "))} · ${esc(c.target)}</div>
+        <div class="row-detail">${esc(c.reason)} — ${esc(c.author)}</div>
+        ${c.action === "create_block" ? "" : `<div class="row-detail">${c.before ? `${esc(fmtVal(c.before))} → ` : ""}${esc(fmtVal(c.after))}</div>`}
+      </div>
+    </div>`).join("") : '<div class="empty">No edits since the plan moved online.</div>';
+}
+
+function renderLiftingPlan(plan) {
+  if (!plan?.text) return;
+  $("liftingWhen").innerHTML = `updated ${relDay(plan.updated_at.slice(0, 10))} by ${esc(plan.updated_by)} <span class="chev">›</span>`;
+  $("liftingPlan").innerHTML = markdown(plan.text);
+}
+
 function renderActivities(recent) {
   $("activityList").innerHTML = recent.length ? recent.map((a) => `
     <div class="row">
@@ -546,6 +567,8 @@ async function main() {
   renderNote(data.note);
   renderWeek(data);
   renderPlan(data);
+  renderPlanChanges(data.planChanges ?? []);
+  renderLiftingPlan(data.liftingPlan);
   renderActivities(data.recent);
   renderBlock(data.block);
   renderGymPlan(data.gymPlan, data.gymLastDone ?? {});

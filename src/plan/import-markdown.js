@@ -1,17 +1,23 @@
-// Imports the running plan and coach instructions from the Running-Coach folder.
+// One-time migration of the running plan from the Running-Coach folder's
+// CURRENT_PLAN.md into the database, plus the coach instructions and athlete
+// profile used by the daily note.
 //
-//   npm run import-plan -- [path/to/Running-Coach]
+//   npm run import-plan -- [path/to/Running-Coach] [--force]
 //
-// Safe to re-run: the plan tables are rebuilt from CURRENT_PLAN.md each time.
-// Run it locally (the markdown lives on the laptop) with DATABASE_URL pointing
-// at Railway's public Postgres URL.
+// The database is now the master copy of the plan, edited through
+// src/plan/store.js (connector, nightly coach). Importing rebuilds the plan
+// tables from the markdown and would wipe those edits, so it refuses once any
+// edit has been logged unless --force is given. Run it locally (the markdown
+// lives on the laptop) with DATABASE_URL pointing at Railway's public Postgres URL.
 
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pool, setSetting } from "../db.js";
 
-const coachDir = process.argv[2] ?? path.join(os.homedir(), "Claude/Running-Coach");
+const args = process.argv.slice(2);
+const force = args.includes("--force");
+const coachDir = args.find((a) => !a.startsWith("--")) ?? path.join(os.homedir(), "Claude/Running-Coach");
 const PLAN_YEAR = 2026;
 const MONTHS = { Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6, Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12 };
 
@@ -220,6 +226,12 @@ async function main() {
   const read = (name) => readFile(path.join(coachDir, name), "utf8");
   const { weeks, block } = parsePlan(await read("CURRENT_PLAN.md"));
 
+  const [{ edits }] = (await pool.query(`select count(*)::int as edits from plan_changes`)).rows;
+  if (edits > 0 && !force) {
+    console.error(`The plan has ${edits} logged edit(s) since the import; importing would overwrite them. Use --force to do it anyway.`);
+    process.exit(1);
+  }
+
   // CURRENT_PLAN.md is the source of truth, so the plan tables are rebuilt from
   // it each time (this also drops weeks that were superseded or removed).
   const client = await pool.connect();
@@ -227,6 +239,16 @@ async function main() {
     await client.query("begin");
     await client.query("delete from plan_weeks"); // cascades to plan_days
     for (const w of weeks) await saveWeek(client, w);
+    if (block) {
+      await client.query("update training_blocks set active = false");
+      await client.query(
+        `insert into training_blocks (name, start_date, end_date, summary, rules, success, active)
+         values ($1, $2, $3, $4, $5, $6, true)
+         on conflict (name) do update set start_date = excluded.start_date, end_date = excluded.end_date,
+           summary = excluded.summary, rules = excluded.rules, success = excluded.success, active = true`,
+        [block.name, block.start, block.end, block.summary, JSON.stringify(block.rules), block.success],
+      );
+    }
     await client.query("commit");
   } catch (err) {
     await client.query("rollback");
@@ -235,7 +257,6 @@ async function main() {
     client.release();
   }
 
-  await setSetting("running_block", block); // the current block's name, dates, rules and success measure
   // The daily analysis uses these as Claude's instructions and athlete context.
   await setSetting("coach_instructions", await read("CLAUDE.md"));
   await setSetting("athlete_profile", await read("ATHLETE_PROFILE.md"));

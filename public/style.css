@@ -141,6 +141,9 @@ section:first-of-type h2 { margin-top: 0; }
 .row-today { background: color-mix(in srgb, var(--run) 7%, transparent); border-radius: 12px; padding-left: 8px; padding-right: 8px; }
 #weekSummary { margin: 4px 0 10px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
+details.changes { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+details.changes > summary { font-weight: 600; }
+
 /* Gym plan day pills. */
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .pill { border: none; cursor: pointer; padding: 6px 12px; border-radius: 999px; font: 600 13px var(--sans); background: var(--track); color: var(--text); text-transform: capitalize; }

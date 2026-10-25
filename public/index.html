@@ -121,16 +121,17 @@
           </div>
           <div class="caption" id="weekSummary" style="text-align:center"></div>
           <div id="planList"></div>
+          <details class="changes"><summary id="changesSummary">Plan change log</summary><div id="planChanges"></div></details>
         </div>
       </details>
 
       <details class="card collapsible">
         <summary class="card-head">
           <span class="label" style="--c: var(--gym)">Lifting plan</span>
-          <span class="when">to be written <span class="chev">›</span></span>
+          <span class="when" id="liftingWhen">to be written <span class="chev">›</span></span>
         </summary>
-        <div class="collapsible-body">
-          <div class="empty">Daniel will write the lifting plan here. Until then, the current JEFIT routine is under Gym → Gym plan.</div>
+        <div class="collapsible-body note-body" id="liftingPlan">
+          <div class="empty">Not written yet. Ask Claude (through the connector) to set it, or have an agent write it. Until then, the current JEFIT routine is under Gym → Gym plan.</div>
         </div>
       </details>
     </section>

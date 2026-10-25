@@ -2,7 +2,8 @@
 // heart rate against the easy guide, gym frequency, recovery and weight.
 // Used by the dashboard's block review and by the Claude connector.
 
-import { getSetting, query } from "./db.js";
+import { query } from "./db.js";
+import { activeBlock } from "./plan/store.js";
 
 const HR_GUIDE = 148; // easy-run guide from CURRENT_PLAN.md (long runs use 150)
 
@@ -67,13 +68,12 @@ export async function blockSummary(start, end) {
 const TZ = process.env.TZ ?? "Australia/Melbourne";
 const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toLocaleDateString("en-CA", { timeZone: TZ });
 
-// The windows the dashboard shows: the current training block so far (from
-// CURRENT_PLAN.md's block section), the last 4 weeks and the 4 before (for
+// The windows the dashboard shows: the active training block so far, the last 4 weeks and the 4 before (for
 // comparison), and everything since the plan started.
 export async function blockReview() {
   const [{ first }] = await query(`select min(start_date)::text as first from plan_weeks`);
   const today = daysAgo(0);
-  const block = await getSetting("running_block");
+  const block = await activeBlock();
   const [last4, prev4, sinceStart, current] = await Promise.all([
     blockSummary(daysAgo(27), today),
     blockSummary(daysAgo(55), daysAgo(28)),

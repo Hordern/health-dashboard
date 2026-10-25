@@ -86,6 +86,38 @@ create table if not exists plan_days (
   notes      text
 );
 
+-- Training blocks (e.g. the Reset block): dates, rules and success measure.
+-- plan_weeks.block holds the block name. One block is active at a time.
+create table if not exists training_blocks (
+  name       text primary key,
+  start_date date not null,
+  end_date   date not null,
+  summary    text,
+  rules      jsonb not null default '[]',
+  success    text,
+  active     boolean not null default false
+);
+
+-- Who last changed a plan day. Every change is also logged in plan_changes.
+alter table plan_days add column if not exists updated_at timestamptz;
+alter table plan_days add column if not exists updated_by text;
+-- Two decimals so actual-style distances like 4.17 km aren't rounded.
+alter table plan_days alter column planned_km type numeric(5, 2);
+
+-- Audit trail for every edit to the plan, by any editor (Daniel via claude.ai,
+-- the nightly coach, other agents). before/after hold only the changed fields.
+create table if not exists plan_changes (
+  id     serial primary key,
+  at     timestamptz not null default now(),
+  author text not null,
+  action text not null,
+  target text not null,
+  before jsonb,
+  after  jsonb,
+  reason text not null
+);
+create index if not exists plan_changes_at_idx on plan_changes (at desc);
+
 -- The daily Claude coaching write-up.
 create table if not exists coaching_notes (
   date       date primary key,

@@ -5,11 +5,11 @@ import { pool, recordSync } from "./db.js";
 import { syncGarmin } from "./sources/garmin.js";
 import { syncWithings } from "./sources/withings.js";
 import { syncJefit } from "./sources/jefit.js";
-import { writeDailyNote } from "./coach/daily-note.js";
+import { runNightlyCoach } from "./coach/nightly-coach.js";
 
 await recordSync("garmin", () => syncGarmin());
 await recordSync("withings", () => syncWithings());
 await recordSync("jefit", () => syncJefit());
-await recordSync("coach", () => writeDailyNote());
+await recordSync("coach", () => runNightlyCoach());
 
 await pool.end();

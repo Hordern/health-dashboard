@@ -5,6 +5,7 @@ import { authorizeUrl, completeAuthorization, RECONNECT_FLAG, TOKEN_KEY as WITHI
 import { SIGN_IN_FLAG } from "./sources/garmin.js";
 import { blockReview } from "./block.js";
 import { mountMcp } from "./mcp.js";
+import { activeBlock, recentChanges } from "./plan/store.js";
 
 const app = express();
 
@@ -62,7 +63,7 @@ async function alerts() {
 
 app.get("/api/dashboard", async (_req, res, next) => {
   try {
-    const [weeks, days, health, weights, runs, recent, gym, note, syncs, gymPlan, lastByDay, block, runningBlock] = await Promise.all([
+    const [weeks, days, health, weights, runs, recent, gym, note, syncs, gymPlan, lastByDay, block, runningBlock, planChanges, liftingPlan] = await Promise.all([
       query(`select * from plan_weeks order by start_date`),
       query(`select p.*, w.block,
                     (select sum(distance_km) from activities a where a.date = p.date and a.type = 'running') as actual_km,
@@ -81,11 +82,13 @@ app.get("/api/dashboard", async (_req, res, next) => {
       // When each routine day was last trained, for the gym plan's "last done".
       query(`select name, max(date)::text as last from gym_sessions where name is not null group by name`),
       blockReview(),
-      getSetting("running_block"),
+      activeBlock(),
+      recentChanges(15),
+      getSetting("lifting_plan"),
     ]);
     res.json({
       alerts: await alerts(), weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs,
-      gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block, runningBlock,
+      gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block, runningBlock, planChanges, liftingPlan,
     });
   } catch (err) {
     next(err);
