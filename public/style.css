@@ -193,7 +193,7 @@ details p { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
 /* Phones and small tablets: the sidebar becomes a sticky pill bar. */
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 12px 16px; }
-  .sidebar { position: sticky; top: 8px; z-index: 5; height: auto; padding: 6px; border-radius: 18px; }
+  .sidebar { position: sticky; top: 8px; z-index: 5; height: auto; padding: 6px; border-radius: 18px; min-width: 0; } /* min-width lets the pill bar scroll instead of widening the page */
   .brand, .sidebar-foot { display: none; }
   .sidebar nav { flex-direction: row; overflow-x: auto; scrollbar-width: none; }
   .sidebar a { white-space: nowrap; padding: 7px 12px; font-size: 14px; }
