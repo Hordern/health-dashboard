@@ -25,7 +25,8 @@ const Proposal = z.object({
   gym_by_weekday: z.record(z.string(), z.string()),
   weeks: z.array(z.object({
     label: z.string(),
-    runs: z.record(z.enum(WEEKDAYS), z.number().positive()),
+    // partialRecord: only run days appear (a plain record over an enum would demand all 7 days).
+    runs: z.partialRecord(z.enum(WEEKDAYS), z.number().positive()).refine((r) => Object.keys(r).length > 0, "at least one run"),
     objective: z.string(),
   })).min(1).max(16),
 });
