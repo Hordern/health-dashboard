@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import express from "express";
 import { getSetting, query, setSetting } from "./db.js";
-import { authorizeUrl, completeAuthorization } from "./sources/withings.js";
+import { authorizeUrl, completeAuthorization, RECONNECT_FLAG, TOKEN_KEY as WITHINGS_TOKEN_KEY } from "./sources/withings.js";
 import { SIGN_IN_FLAG } from "./sources/garmin.js";
 
 const app = express();
@@ -22,15 +22,36 @@ app.get("/robots.txt", (_req, res) => res.type("text/plain").send("User-agent: *
 const GARMIN_LOGIN_CMD =
   "cd ~/Projects/health-dashboard && railway run --service Postgres sh -c 'DATABASE_URL=$DATABASE_PUBLIC_URL npm run garmin:login'";
 
+const onDate = (flag) => new Date(flag.since).toLocaleDateString("en-AU");
+
 async function alerts() {
-  const [garminTokens, signInRequired] = await Promise.all([getSetting("garmin_tokens"), getSetting(SIGN_IN_FLAG)]);
+  const [garminTokens, signInRequired, withingsTokens, withingsReconnect] = await Promise.all([
+    getSetting("garmin_tokens"), getSetting(SIGN_IN_FLAG), getSetting(WITHINGS_TOKEN_KEY), getSetting(RECONNECT_FLAG),
+  ]);
   const list = [];
+
+  // Withings: the developer-app variables come first, then the one-click OAuth connect.
+  if (!process.env.WITHINGS_CLIENT_ID) {
+    list.push({
+      title: "Withings isn't set up",
+      detail: "Create an app at developer.withings.com, then add WITHINGS_CLIENT_ID, WITHINGS_CLIENT_SECRET and WITHINGS_CALLBACK_URL to the web and daily services in Railway.",
+    });
+  } else if (withingsReconnect) {
+    list.push({
+      title: "Withings needs reconnecting",
+      detail: `Withings stopped accepting the saved access on ${onDate(withingsReconnect)}, so no new weigh-ins are coming in.`,
+      link: { href: "/withings/connect", text: "Reconnect Withings" },
+    });
+  } else if (!withingsTokens) {
+    list.push({ title: "Withings isn't connected", detail: "Approve access once to start pulling weigh-ins.", link: { href: "/withings/connect", text: "Connect Withings" } });
+  }
+
   if (!garminTokens) {
     list.push({ title: "Garmin isn't connected", detail: "Sign in once from your Mac:", command: GARMIN_LOGIN_CMD });
   } else if (signInRequired) {
     list.push({
       title: "Garmin needs a fresh sign-in",
-      detail: `Garmin rejected the saved session on ${new Date(signInRequired.since).toLocaleDateString("en-AU")}, so no new Garmin data is coming in. Run this in Terminal:`,
+      detail: `Garmin rejected the saved session on ${onDate(signInRequired)}, so no new Garmin data is coming in. Run this in Terminal:`,
       command: GARMIN_LOGIN_CMD,
     });
   }
@@ -63,7 +84,7 @@ app.get("/api/dashboard", async (_req, res, next) => {
 // withings_tokens row from settings first.
 app.get("/withings/connect", async (_req, res, next) => {
   try {
-    if (await getSetting("withings_tokens")) return res.status(409).send("Withings is already connected.");
+    if (await getSetting(WITHINGS_TOKEN_KEY)) return res.status(409).send("Withings is already connected.");
     const state = crypto.randomUUID();
     await setSetting("withings_oauth_state", state);
     res.redirect(await authorizeUrl(state));

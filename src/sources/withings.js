@@ -2,10 +2,12 @@
 // One-time setup: visit /withings/connect on the deployed app and approve access.
 // After that the refresh token (stored in settings) keeps the sync running.
 
-import { WithingsClient, Scope, MeasureType, measureValue } from "withings-node-oauth2";
-import { getSetting, query, setSetting } from "../db.js";
+import { WithingsClient, WithingsAuthError, Scope, MeasureType, measureValue } from "withings-node-oauth2";
+import { clearSetting, getSetting, query, setSetting } from "../db.js";
 
-const TOKEN_KEY = "withings_tokens";
+export const TOKEN_KEY = "withings_tokens";
+// Set when Withings rejects the saved tokens; the dashboard shows a reconnect banner while it exists.
+export const RECONNECT_FLAG = "withings_reconnect_required";
 
 export async function createClient() {
   const tokens = await getSetting(TOKEN_KEY);
@@ -28,6 +30,7 @@ export async function completeAuthorization(code) {
   const wc = await createClient();
   const tokens = await wc.oauth.exchangeCode(code);
   await setSetting(TOKEN_KEY, tokens);
+  await clearSetting(RECONNECT_FLAG); // connected again, so drop the banner
 }
 
 export async function syncWithings({ days = 30 } = {}) {
@@ -37,6 +40,23 @@ export async function syncWithings({ days = 30 } = {}) {
   const from = new Date(Date.now() - days * 86_400_000);
   let count = 0;
 
+  try {
+    count = await saveWeighIns(wc, from);
+  } catch (err) {
+    // The library already tried a refresh before throwing this, so the tokens
+    // are dead. Delete them (which unlocks /withings/connect) and flag the banner.
+    if (err instanceof WithingsAuthError) {
+      await clearSetting(TOKEN_KEY);
+      await setSetting(RECONNECT_FLAG, { since: new Date().toISOString() });
+      throw new Error("Withings access expired — reconnect from the dashboard banner");
+    }
+    throw err;
+  }
+  return `${count} weigh-ins from the last ${days} days`;
+}
+
+async function saveWeighIns(wc, from) {
+  let count = 0;
   for await (const group of wc.measures.paginate({
     types: [MeasureType.Weight, MeasureType.FatRatio, MeasureType.MuscleMass],
     category: 1, // real measurements, not goals
@@ -53,5 +73,5 @@ export async function syncWithings({ days = 30 } = {}) {
     );
     count++;
   }
-  return `${count} weigh-ins from the last ${days} days`;
+  return count;
 }

@@ -4,59 +4,116 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Health Dashboard</title>
+<title>Health · Daniel Hordern</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div class="backdrop" aria-hidden="true"></div>
 
-<header>
-  <div>
-    <h1>Daniel's Health Dashboard</h1>
-    <div class="sub" id="syncStatus">Loading…</div>
-  </div>
-  <button class="btn" onclick="location.reload()">Reload</button>
-</header>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">health<span class="brand-dot">.</span></div>
+    <nav id="nav">
+      <a href="#health"><span class="dot" style="--c: var(--heart)"></span>Health</a>
+      <a href="#training"><span class="dot" style="--c: var(--run)"></span>Training</a>
+      <a href="#gym"><span class="dot" style="--c: var(--gym)"></span>Gym</a>
+      <a href="#trends"><span class="dot" style="--c: var(--hrv)"></span>Trends</a>
+      <a href="#coach"><span class="dot" style="--c: var(--coach)"></span>Coach</a>
+    </nav>
+    <div class="sidebar-foot" id="syncList"></div>
+  </aside>
 
-<div id="alerts"></div>
+  <main>
+    <header class="profile">
+      <div class="avatar">DH</div>
+      <div>
+        <h1>Daniel Hordern</h1>
+        <div class="muted" id="lastSync">Loading…</div>
+      </div>
+    </header>
 
-<div class="grid" id="cards"></div>
+    <div id="alerts"></div>
 
-<div class="panel">
-  <h2 id="noteTitle">Coach's note</h2>
-  <div id="note" class="note-body"><span class="muted">No note yet.</span></div>
+    <section id="health">
+      <h2>Health</h2>
+      <div class="cards cards-3" id="healthCards"></div>
+    </section>
+
+    <section id="training">
+      <h2>Training</h2>
+      <div class="cards cards-week">
+        <div class="card" id="weekCard"></div>
+        <div class="card" id="nextCard"></div>
+      </div>
+      <div class="cards cards-2">
+        <div class="card">
+          <div class="card-head"><span class="label" style="--c: var(--run)">Weekly volume</span><span class="when">planned vs actual km</span></div>
+          <div class="chart"><canvas id="volumeChart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><span class="label" style="--c: var(--heart)">Avg HR per run</span><span class="when">easy guide &lt;148 bpm</span></div>
+          <div class="chart"><canvas id="hrTrendChart"></canvas></div>
+        </div>
+      </div>
+      <!-- Collapsed by default so the day-by-day plan doesn't take over the page. -->
+      <details class="card collapsible">
+        <summary class="card-head">
+          <span class="label" style="--c: var(--run)">Weekly plan</span>
+          <span class="when">day by day, with coach's notes <span class="chev">›</span></span>
+        </summary>
+        <div class="collapsible-body">
+          <div class="week-nav">
+            <button class="icon-btn" id="prevWeek" aria-label="Previous week">‹</button>
+            <span id="weekTitle"></span>
+            <button class="icon-btn" id="nextWeek" aria-label="Next week">›</button>
+          </div>
+          <div id="planList"></div>
+        </div>
+      </details>
+      <div class="card">
+        <div class="card-head"><span class="label" style="--c: var(--run)">Recent activity</span><span class="when">last 10 days</span></div>
+        <div id="activityList"></div>
+      </div>
+    </section>
+
+    <section id="gym">
+      <h2>Gym</h2>
+      <div class="card" id="gymList"></div>
+    </section>
+
+    <section id="trends">
+      <h2>Trends</h2>
+      <div class="cards cards-2">
+        <div class="card">
+          <div class="card-head"><span class="label" style="--c: var(--heart)">Resting HR &amp; HRV</span><span class="when">14 days</span></div>
+          <div class="chart"><canvas id="hrvChart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><span class="label" style="--c: var(--ready)">Readiness &amp; acute load</span><span class="when">14 days</span></div>
+          <div class="chart"><canvas id="readinessChart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><span class="label" style="--c: var(--weight)">Weight</span><span class="when">120 days</span></div>
+          <div class="chart"><canvas id="weightChart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-head"><span class="label" style="--c: var(--sleep)">Sleep stages</span><span class="when">7 nights</span></div>
+          <div class="chart"><canvas id="sleepChart"></canvas></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="coach">
+      <h2>Coach</h2>
+      <article class="card note" id="note"><span class="muted">No note yet.</span></article>
+    </section>
+
+    <footer class="foot">Built by Daniel Hordern · <a href="https://horderns.com">horderns.com</a> · <a href="https://github.com/Hordern/health-dashboard">source</a></footer>
+  </main>
 </div>
-
-<div class="two-col">
-  <div class="panel"><h2>Resting HR &amp; overnight HRV — 14 days</h2><div class="chart"><canvas id="hrvChart"></canvas></div></div>
-  <div class="panel"><h2>Training readiness &amp; acute load — 14 days</h2><div class="chart"><canvas id="readinessChart"></canvas></div></div>
-</div>
-
-<div class="panel">
-  <h2>Weekly running plan</h2>
-  <div class="week-nav">
-    <button class="btn-light" id="prevWeek">&larr; Prev</button>
-    <div><div class="week-title" id="weekTitle"></div><div class="week-total" id="weekTotal"></div></div>
-    <button class="btn-light" id="nextWeek">Next &rarr;</button>
-  </div>
-  <div class="table-wrap" id="planTable"></div>
-  <div class="sub">Plan from CURRENT_PLAN.md. Actual km comes from Garmin runs on that date.</div>
-</div>
-
-<div class="two-col">
-  <div class="panel"><h2>Weekly volume — planned vs actual (km)</h2><div class="chart"><canvas id="volumeChart"></canvas></div></div>
-  <div class="panel">
-    <h2>Avg HR per run</h2><div class="chart"><canvas id="hrTrendChart"></canvas></div>
-    <div class="sub">Guides: easy &lt;148 bpm, long &lt;150 bpm (excluding the finishing hill).</div>
-  </div>
-</div>
-
-<div class="two-col">
-  <div class="panel"><h2>Weight — Withings, 120 days</h2><div class="chart"><canvas id="weightChart"></canvas></div></div>
-  <div class="panel"><h2>Gym sessions — JEFIT, 14 days</h2><div class="table-wrap" id="gymTable"></div></div>
-</div>
-
-<div class="panel"><h2>Activity log — 10 days</h2><div class="table-wrap" id="activityTable"></div></div>
-<div class="panel"><h2>Sleep — 7 nights</h2><div class="table-wrap" id="sleepTable"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
 <script src="app.js"></script>
