@@ -43,7 +43,8 @@ database writes. Each source's last result shows at the top of the dashboard.
 4. Create the **daily** service from the same repo with the same variables,
    start command `npm run daily`, and cron schedule `0 9 * * *` (UTC = 8pm
    Melbourne in AEDT; Railway cron is always UTC).
-5. Locally, run the setup scripts against Railway's Postgres (its public URL
+5. Install the Garmin client locally once: `npm run setup:python`.
+   Then run the setup scripts against Railway's Postgres (its public URL
    comes from the TCP proxy on the Postgres service):
    ```
    railway run --service Postgres sh -c 'DATABASE_URL=$DATABASE_PUBLIC_URL npm run migrate'

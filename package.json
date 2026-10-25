@@ -6,7 +6,8 @@
     "migrate": "node src/migrate.js",
     "import-plan": "node src/plan/import-markdown.js",
     "garmin:login": "node scripts/garmin-login.js",
-    "garmin:check": "node scripts/garmin-check.js"
+    "garmin:check": "node scripts/garmin-check.js",
+    "setup:python": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
   },
   "type": "module",
   "private": "true",

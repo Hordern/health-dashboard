@@ -3,15 +3,21 @@
 // settings. The daily sync reuses and refreshes them; no password is stored.
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { getSetting, query, setSetting } from "../db.js";
 
 const TOKEN_KEY = "garmin_tokens";
 const SCRIPT = fileURLToPath(new URL("./garmin_fetch.py", import.meta.url));
 
+// Railway's image sets PYTHON. On a laptop, use the project's .venv (created
+// with `npm run setup:python`) so garminconnect is found without a global install.
+const LOCAL_VENV = fileURLToPath(new URL("../../.venv/bin/python", import.meta.url));
+const PYTHON = process.env.PYTHON ?? (existsSync(LOCAL_VENV) ? LOCAL_VENV : "python3");
+
 export function runGarminScript(mode, input, { interactive = false } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.env.PYTHON ?? "python3", [SCRIPT, mode], {
+    const child = spawn(PYTHON, [SCRIPT, mode], {
       stdio: [interactive ? "inherit" : "pipe", "pipe", "inherit"],
     });
     let out = "";
