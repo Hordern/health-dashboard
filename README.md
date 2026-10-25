@@ -5,7 +5,7 @@ activities and runs, recovery (resting HR, HRV, sleep, training readiness),
 weight and gym sessions, alongside the current running plan and a daily Claude
 coaching note.
 
-Data comes from Garmin, Withings scales, JEFIT (not built yet) and the plan in
+Data comes from Garmin, Withings scales, JEFIT and the plan in
 `~/Claude/Running-Coach/CURRENT_PLAN.md`.
 
 ## How it fits together
@@ -49,7 +49,9 @@ database writes. Each source's last result shows at the top of the dashboard.
    npm run import-plan
    npm run garmin:login
    ```
-6. Withings: create an app at developer.withings.com with callback
+6. JEFIT: create a **read-only** token at jefit.com → Settings → Access tokens
+   (needs Elite) and set `JEFIT_TOKEN` on both services.
+7. Withings: create an app at developer.withings.com with callback
    `https://<domain>/withings/callback`, then visit `https://<domain>/withings/connect`.
 
 ## Day-to-day

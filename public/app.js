@@ -115,10 +115,10 @@ function renderWeight(weights) {
 }
 
 function renderGym(gym) {
-  document.getElementById("gymTable").innerHTML = table(["Date", "Session", "Exercises"], gym.map((g) => [
+  document.getElementById("gymTable").innerHTML = table(["Date", "Session", "Exercises (sets)"], gym.map((g) => [
     fmtDay(g.date),
     esc(g.name ?? ""),
-    esc((g.exercises ?? []).map((e) => e.name).join(", ")),
+    esc((g.exercises ?? []).map((e) => `${e.name} ×${e.sets?.length ?? 0}`).join(", ")),
   ]));
 }
 
