@@ -147,3 +147,39 @@ create table if not exists coach_chats (
   proposal   jsonb,
   block_name text
 );
+
+-- Coach rules engine (docs/coach-rules.md). Runs are planned in minutes; the km
+-- shown alongside is an estimate from recent easy pace.
+alter table plan_days add column if not exists planned_min integer;
+alter table plan_days add column if not exists session text; -- easy | long | strides | benchmark | quality | cross
+alter table plan_weeks add column if not exists kind text;   -- build | deload
+alter table training_blocks add column if not exists block_type text; -- FITNESS_BASE, …
+alter table training_blocks add column if not exists review jsonb;    -- end-of-block review (spec section 10)
+alter table training_blocks add column if not exists review_at timestamptz;
+
+-- Manual daily check-in: pain (0–10) during running and the next morning, and
+-- session RPE. Garmin doesn't record these; the PAIN flag depends on them.
+create table if not exists checkins (
+  date              date primary key,
+  pain_during       integer check (pain_during between 0 and 10),
+  pain_next_morning integer check (pain_next_morning between 0 and 10),
+  rpe               integer check (rpe between 1 and 10),
+  note              text,
+  updated_at        timestamptz not null default now(),
+  updated_by        text
+);
+
+-- The rules engine's daily readiness result: which recovery flags were active
+-- and what it did about them. One row per day.
+create table if not exists readiness (
+  date    date primary key,
+  flags   jsonb not null,  -- [{ flag, evidence }]
+  actions jsonb not null,  -- what the engine changed or recommends
+  at      timestamptz not null default now()
+);
+
+-- Garmin Body Battery: latest reading, at wake, and the day's high/low.
+alter table health_daily add column if not exists body_battery integer;
+alter table health_daily add column if not exists body_battery_wake integer;
+alter table health_daily add column if not exists body_battery_high integer;
+alter table health_daily add column if not exists body_battery_low integer;

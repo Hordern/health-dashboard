@@ -57,6 +57,35 @@ database writes. Each source's last result shows at the top of the dashboard.
    `https://<domain>/withings/callback`, then visit `https://<domain>/withings/connect`
    (it only works while Withings is not yet connected).
 
+## Coach rules engine
+
+`docs/coach-rules.md` (Coach Rules Spec v1) defines how the plan evolves; the
+code follows its division of work: the rules are deterministic code and Claude
+only writes the notes.
+
+| Spec section | Code |
+|---|---|
+| 1 Config | `src/coach/config.js` (all thresholds, plus Daniel's run/gym days) |
+| 4 Daily readiness (flags + actions) | `src/coach/readiness.js`, run at 7pm, saved in `readiness` |
+| 5 End-of-block review, 8 recommendation | `src/coach/review.js`, run on the block's last day (or early if stalled), saved on the block |
+| 6/8a Weekly progression, block shapes | `src/coach/blocks.js` (generator, in minutes; km is an estimate) |
+| Pain/RPE manual input | `checkins` table, dashboard check-in card and the connector's `log_checkin` |
+
+The next block is agreed in the planning chat: the coach explains the review
+and calls `prepare_block`, the engine generates the block within the
+guardrails, and Daniel locks it in. Deviations from the spec: with 3 runs a week
+the long run is capped at 40% (30% is impossible with 3 runs); a deload week
+drops runs rather than scheduling any under 20 min; decoupling and quality
+scoring wait for long runs ≥ 60 min and quality sessions.
+
+## Schedule
+
+The daily service runs at 6am, 9am, 3pm, 7pm and 10pm Melbourne
+(`src/schedule.js`, cron `0 4,8,11,19,22 * * *` UTC). Every run syncs Garmin,
+Withings and JEFIT; the 7pm run (or 10pm if 7pm failed) also runs the rules
+engine, any end-of-block review and the nightly coach. The dashboard's Sync now
+button (coach PIN) runs a data sync on demand.
+
 ## The plan: where it lives and who edits it
 
 The database is the master copy of the running plan (`plan_weeks`, `plan_days`),
@@ -64,9 +93,11 @@ the training blocks (`training_blocks`) and the lifting plan. Every edit goes
 through `src/plan/store.js` and is logged in `plan_changes` with its author and
 reason; the dashboard shows the log under Coach → Running plan.
 
-- **Nightly coach** (`src/coach/nightly-coach.js`, 8pm): writes the note,
-  reviews each unreviewed past run day (status + comment), and may adjust
-  upcoming distances with a reason. It never moves runs or rewrites blocks.
+- **Rules engine** (`src/coach/readiness.js`, 7pm): applies the spec's daily
+  recovery actions to upcoming runs, logged as `rules-engine`.
+- **Nightly coach** (`src/coach/nightly-coach.js`, 7pm): writes the note and
+  reviews each unreviewed past run day (status + comment). It explains the
+  engine's decisions and never changes volumes.
 - **Daniel / other agents**: through the connector's write URL (below) —
   update a day, move a run, comment on a run, create/update a block, set the
   lifting plan.

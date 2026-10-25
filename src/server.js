@@ -8,6 +8,10 @@ import { mountMcp } from "./mcp.js";
 import { activeBlock, recentChanges } from "./plan/store.js";
 import { blockStatus } from "./plan/status.js";
 import { latestOpenChat, lockIn, sendMessage, startChat } from "./coach/planning-chat.js";
+import { recentCheckins, saveCheckin } from "./coach/checkins.js";
+import { isSyncing, requestSync } from "./sync.js";
+import { localDate, nextSync } from "./schedule.js";
+import { TYPE_LABEL } from "./coach/review.js";
 
 const app = express();
 
@@ -72,11 +76,12 @@ async function alerts() {
 
 app.get("/api/dashboard", async (_req, res, next) => {
   try {
-    const [weeks, days, health, weights, runs, recent, gym, note, syncs, gymPlan, lastByDay, block, runningBlock, planChanges, liftingPlan] = await Promise.all([
+    const [weeks, days, health, weights, runs, recent, gym, note, syncs, gymPlan, lastByDay, block, runningBlock, planChanges, liftingPlan, status, checkins, [readiness]] = await Promise.all([
       query(`select * from plan_weeks order by start_date`),
       query(`select p.*, w.block,
                     (select sum(distance_km) from activities a where a.date = p.date and a.type = 'running') as actual_km,
-                    (select round(avg(avg_hr)) from activities a where a.date = p.date and a.type = 'running') as actual_hr
+                    (select round(avg(avg_hr)) from activities a where a.date = p.date and a.type = 'running') as actual_hr,
+                    (select round(sum(duration_s) / 60) from activities a where a.date = p.date and a.type = 'running') as actual_min
              from plan_days p join plan_weeks w on w.start_date = p.week_start order by date`),
       query(`select * from health_daily where date > current_date - 14 order by date`),
       // Full history (about a reading a day, so ~1,000 rows); the page picks the range to show.
@@ -94,10 +99,14 @@ app.get("/api/dashboard", async (_req, res, next) => {
       activeBlock(),
       recentChanges(15),
       getSetting("lifting_plan"),
+      dataStatus(),
+      recentCheckins(7),
+      query(`select date::text, flags, actions from readiness order by date desc limit 1`),
     ]);
     res.json({
       alerts: await alerts(), weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs,
-      gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block, runningBlock, planChanges, liftingPlan,
+      gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block, runningBlock, planChanges, liftingPlan, status, checkins, readiness: readiness ?? null,
+      blockProgress: await blockProgress(runningBlock),
     });
   } catch (err) {
     next(err);
@@ -164,6 +173,48 @@ app.get("/api/coach/chat", handle(() => latestOpenChat()));
 app.post("/api/coach/chat", handle(() => startChat()));
 app.post("/api/coach/chat/:id/messages", handle((req) => sendMessage(Number(req.params.id), String(req.body.text ?? "").slice(0, 4000))));
 app.post("/api/coach/chat/:id/lock", handle((req) => lockIn(Number(req.params.id))));
+app.post("/api/coach/sync", handle(() => requestSync()));
+app.post("/api/coach/checkin", handle((req) => {
+  const { date = localDate(), pain_during, pain_next_morning, rpe, note } = req.body ?? {};
+  const num = (v) => (v === "" || v == null ? undefined : Number(v));
+  return saveCheckin(date, { pain_during: num(pain_during), pain_next_morning: num(pain_next_morning), rpe: num(rpe), note: note || undefined }, "Daniel (dashboard)");
+}));
+
+// What the dashboard's Data status panel shows: each source's last success and
+// last attempt, the next scheduled sync, and the plan's last edit.
+async function dataStatus() {
+  const [sources, [lastEdit]] = await Promise.all([
+    query(`select source,
+                  max(started_at) as last_attempt,
+                  max(finished_at) filter (where ok) as last_ok,
+                  (array_agg(ok order by started_at desc))[1] as last_ok_flag,
+                  (array_agg(message order by started_at desc))[1] as last_message
+           from sync_runs group by source order by source`),
+    query(`select at, author, action, target from plan_changes order by at desc limit 1`),
+  ]);
+  return { sources, plan_last_edit: lastEdit ?? null, next_sync: nextSync(), syncing: isSyncing() };
+}
+
+// The active block's label ("Base block 1 · Week 1 of 3 · Build") and minutes
+// planned vs done per week, for the block progress bars.
+async function blockProgress(block) {
+  if (!block) return null;
+  const weeks = await query(
+    `select w.label, w.kind, w.start_date::text as start, w.end_date::text as "end",
+            coalesce(sum(d.planned_min) filter (where coalesce(d.session, '') <> 'cross'), 0)::int as planned_min,
+            coalesce((select round(sum(a.duration_s) / 60) from activities a where a.type = 'running' and a.date between w.start_date and w.end_date), 0)::int as done_min
+     from plan_weeks w join plan_days d on d.week_start = w.start_date where w.block = $1 group by w.start_date order by w.start_date`,
+    [block.name]);
+  const [{ n }] = await query(`select count(*)::int as n from training_blocks where block_type = $1 and start_date <= $2`, [block.block_type, block.start]);
+  const today = localDate();
+  const current = weeks.findIndex((w) => today >= w.start && today <= w.end);
+  return {
+    label: `${TYPE_LABEL[block.block_type] ?? "Training"} block ${n || 1}`,
+    week: current === -1 ? null : current + 1, weeks_total: weeks.length,
+    week_kind: current === -1 ? null : weeks[current].kind,
+    weeks,
+  };
+}
 
 app.use(express.static(new URL("../public", import.meta.url).pathname));
 

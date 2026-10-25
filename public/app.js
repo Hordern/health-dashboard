@@ -18,6 +18,24 @@ function relDay(d) {
   return diff === 0 ? "Today" : diff === 1 ? "Yesterday" : fmtDay(d);
 }
 
+// "12 min ago", "3 h ago", or a date — for the Data status panel.
+function relTime(iso) {
+  if (!iso) return "never";
+  const mins = Math.round((Date.now() - new Date(iso)) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 24 * 60) return `${Math.round(mins / 60)} h ago`;
+  return fmtDay(new Date(iso).toLocaleDateString("en-CA"));
+}
+const clock = (iso) => new Date(iso).toLocaleTimeString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+
+// A run's plan in minutes, with the km estimate as a guide ("24 min · ≈3.3 km").
+const isRunDay = (d) => d.planned_min || d.planned_km || d.actual_km;
+function planText(d) {
+  if (d.planned_min) return `${d.planned_min} min${d.planned_km ? ` · ≈${d.planned_km} km` : ""}`;
+  return d.planned_km ? `${d.planned_km} km` : "";
+}
+
 // Seconds → "7 hr 20 min" (or "0h32" style for the compact lists).
 const hrMin = (s) => (s == null ? null : { h: Math.floor(s / 3600), m: Math.round((s % 3600) / 60) });
 const hm = (s) => (s == null ? "—" : `${hrMin(s).h}h${String(hrMin(s).m).padStart(2, "0")}`);
@@ -102,6 +120,7 @@ function renderHealth({ health, weights }) {
   const hrv = latest("hrv_last_night");
   const sleep = latest("sleep_s");
   const load = latest("acute_load");
+  const battery = latest("body_battery");
   const w = weights.at(-1);
   const weekAgo = w && [...weights].reverse().find((x) => new Date(x.measured_at) <= new Date(new Date(w.measured_at) - 6 * 86_400_000));
   const rhrs = nums(health, "resting_hr");
@@ -136,6 +155,11 @@ function renderHealth({ health, weights }) {
         <div class="legend">${stages.map(([n, v, c]) => `<span><i style="background: var(${c})"></i>${n} ${hm(v)}</span>`).join("")}</div>`
         : `<div class="caption">${waiting}</div>`}
     </div>`,
+    metricCard({
+      title: "Body Battery", icon: "load", color: "--ready", date: battery?.date,
+      value: battery?.body_battery, viz: battery && ring(battery.body_battery, 100, "--ready", `${battery.body_battery}`),
+      caption: battery ? `Wake ${battery.body_battery_wake ?? "—"} · high ${battery.body_battery_high ?? "—"} · low ${battery.body_battery_low ?? "—"}` : waiting,
+    }),
     metricCard({
       title: "Weight", icon: "scale", color: "--weight", date: w?.measured_at,
       value: w?.weight_kg?.toFixed(1), unit: "kg", viz: sparkline(weights.filter((x) => new Date(x.measured_at) > Date.now() - 90 * 86_400_000).map((x) => x.weight_kg), "--weight"),
@@ -189,33 +213,40 @@ function renderNote(note) {
 
 // ---------- Training ----------
 
-function renderWeek({ weeks, days }) {
+function renderWeek({ weeks, days, blockProgress: bp }) {
   const today = todayIso();
   const week = weeks.find((w) => today >= w.start_date && today <= w.end_date) ?? weeks.at(-1);
-  if (!week) return ($("weekCard").innerHTML = `${label("This week", "run", "--run")}<div class="empty">No plan imported yet.</div>`);
+  if (!week) return ($("weekCard").innerHTML = `${label("This week", "run", "--run")}<div class="empty">No plan yet.</div>`);
 
+  // Minutes run vs planned this week (km plans from older blocks fall back to km).
   const rows = days.filter((d) => d.week_start === week.start_date);
-  const done = rows.reduce((s, d) => s + (d.actual_km ?? 0), 0);
-  const planned = week.planned_total_km ?? rows.reduce((s, d) => s + (d.planned_km ?? 0), 0);
+  const byMin = rows.some((d) => d.planned_min);
+  const done = rows.reduce((s, d) => s + Number(byMin ? d.actual_min ?? 0 : d.actual_km ?? 0), 0);
+  const planned = rows.reduce((s, d) => s + Number(byMin ? d.planned_min ?? 0 : d.planned_km ?? 0), 0);
+  const unit = byMin ? "min" : "km";
+  // "Base block 1 · Week 1 of 3 · Build" so it's clear what we're doing.
+  const title = bp?.week ? `${bp.label} · Week ${bp.week} of ${bp.weeks_total} · ${bp.week_kind === "deload" ? "Deload" : "Build"}` : `${week.label}`;
   $("weekCard").innerHTML = `
-    <div class="card-head">${label("This week", "run", "--run")}<span class="when">${esc(week.label)} · ${fmtShort(week.start_date)} – ${fmtShort(week.end_date)}</span></div>
-    <div class="week-total"><span class="big">${done.toFixed(1)}</span><span class="unit">of ${planned} km</span></div>
+    <div class="card-head">${label("This week", "run", "--run")}<span class="when">${fmtShort(week.start_date)} – ${fmtShort(week.end_date)}</span></div>
+    <div class="block-title">${esc(title)}</div>
+    <div class="week-total"><span class="big">${byMin ? Math.round(done) : done.toFixed(1)}</span><span class="unit">of ${Math.round(planned * 10) / 10} ${unit}</span></div>
     <div class="progress"><span style="width:${Math.min(100, (done / (planned || 1)) * 100)}%"></span></div>
     <div class="week">${rows.map((d) => `
       <div class="day${d.date === today ? " today" : ""}" title="${esc([d.gym, d.run_type].filter(Boolean).join(" · "))}">
         ${asDate(d.date).toLocaleDateString(undefined, { weekday: "short" })}
         <b>${asDate(d.date).getDate()}</b>
-        <div class="km">${d.actual_km ?? d.planned_km ?? ""}</div>
-        <div class="status ${d.planned_km || d.actual_km ? d.status : ""}"></div>
+        <div class="km">${d.planned_min ? `${d.actual_min ?? d.planned_min}′` : d.actual_km ?? d.planned_km ?? ""}</div>
+        <div class="status ${isRunDay(d) ? d.status : ""}"></div>
       </div>`).join("")}</div>`;
 
-  const next = days.find((d) => d.date >= today && d.planned_km && d.status === "upcoming");
+  const next = days.find((d) => d.date >= today && (d.planned_min || d.planned_km) && d.status === "upcoming");
   $("nextCard").innerHTML = `
     <div class="card-head">${label("Next run", "run", "--run")}<span class="when">${next ? relDay(next.date) : ""}</span></div>
     ${next ? `
-      <div class="big">${next.planned_km}<span class="unit">km</span></div>
+      <div class="big">${next.planned_min ?? next.planned_km}<span class="unit">${next.planned_min ? "min" : "km"}</span></div>
       <div class="caption" style="font-size:15px;color:var(--text);font-weight:600">${esc(next.run_type ?? "Run")}</div>
-      <div class="caption">${esc([next.hr_guide, next.shoe].filter(Boolean).join(" · "))}</div>
+      <div class="caption">${esc([next.planned_min && next.planned_km ? `≈${next.planned_km} km` : "", next.hr_guide, next.shoe].filter(Boolean).join(" · "))}</div>
+      ${next.notes ? `<div class="caption">${esc(next.notes)}</div>` : ""}
       <div class="caption">${esc(next.gym ? `Gym that morning: ${next.gym}` : "")}</div>`
     : '<div class="empty">No run planned yet.</div>'}`;
 }
@@ -229,8 +260,8 @@ function renderPlan({ weeks, days, runningBlock }) {
   if (b) {
     const day = Math.floor((asDate(today) - asDate(b.start)) / 86_400_000) + 1;
     const total = Math.floor((asDate(b.end) - asDate(b.start)) / 86_400_000) + 1;
-    const next = days.find((d) => d.date >= today && d.planned_km && d.status === "upcoming");
-    $("runPlanWhen").innerHTML = `${esc(b.name)} · day ${Math.min(day, total)} of ${total}${next ? ` · next ${asDate(next.date).toLocaleDateString(undefined, { weekday: "short" })} ${next.planned_km} km` : ""} <span class="chev">›</span>`;
+    const next = days.find((d) => d.date >= today && (d.planned_min || d.planned_km) && d.status === "upcoming");
+    $("runPlanWhen").innerHTML = `${esc(b.name)} · day ${Math.min(day, total)} of ${total}${next ? ` · next ${asDate(next.date).toLocaleDateString(undefined, { weekday: "short" })} ${next.planned_min ? `${next.planned_min} min` : `${next.planned_km} km`}` : ""} <span class="chev">›</span>`;
     $("blockInfo").innerHTML = `
       <div class="block-info">
         <div class="row-title">${esc(b.name)} · ${fmtShort(b.start)} – ${fmtShort(b.end)}</div>
@@ -247,11 +278,12 @@ function renderPlan({ weeks, days, runningBlock }) {
   const show = () => {
     const w = weeks[i];
     $("weekTitle").textContent = `${w.block && w.block !== "Comeback" ? `${w.block} · ` : ""}${w.label} · ${fmtShort(w.start_date)} – ${fmtShort(w.end_date)}`;
-    $("weekSummary").textContent = [w.planned_total_km != null ? `${w.planned_total_km} km planned` : "", w.summary ?? ""].filter(Boolean).join(" · ");
+    const weekMin = days.filter((d) => d.week_start === w.start_date).reduce((sum, d) => sum + (d.planned_min ?? 0), 0);
+    $("weekSummary").textContent = [weekMin ? `${weekMin} min planned` : w.planned_total_km != null ? `${w.planned_total_km} km planned` : "", w.summary ?? ""].filter(Boolean).join(" · ");
     $("prevWeek").disabled = i === 0;
     $("nextWeek").disabled = i === weeks.length - 1;
     $("planList").innerHTML = days.filter((d) => d.week_start === w.start_date).map((d) => {
-      const isRun = d.planned_km || d.actual_km;
+      const isRun = isRunDay(d);
       // On run days the coach's comment is the point, so it's shown in full;
       // on other days it sits behind a toggle.
       const comment = !d.notes ? "" : isRun
@@ -261,13 +293,13 @@ function renderPlan({ weeks, days, runningBlock }) {
       <div class="row${d.date === today ? " row-today" : ""}">
         <div class="row-date"><b>${asDate(d.date).toLocaleDateString(undefined, { weekday: "short" })}</b>${fmtShort(d.date)}</div>
         <div class="row-main">
-          <div class="row-title">${esc(isRun ? `${d.run_type ?? "Run"}${d.planned_km ? ` ${d.planned_km} km` : ""}` : "No run")}
+          <div class="row-title">${esc(isRun ? `${d.run_type ?? "Run"} · ${planText(d)}` : "No run")}
             ${isRun ? `<span class="chip" style="--c: var(${statusColor[d.status] ?? "--muted"})">${d.status}</span>` : ""}</div>
           <div class="row-detail">${esc([d.gym && `Gym: ${d.gym}`, isRun && d.hr_guide, isRun && d.shoe].filter(Boolean).join(" · "))}</div>
           ${comment}
         </div>
-        <div class="row-side">${d.actual_km != null ? `${d.actual_km} km` : ""}
-          <div class="muted">${d.actual_hr ? `<span class="${d.actual_hr > HR_GUIDE ? "hot" : ""}">${d.actual_hr} bpm</span>` : d.actual_km != null ? "actual" : ""}</div></div>
+        <div class="row-side">${d.actual_min != null ? `${d.actual_min} min` : ""}
+          <div class="muted">${d.actual_km != null ? `${d.actual_km} km` : ""}${d.actual_hr ? ` · <span class="${d.actual_hr > HR_GUIDE ? "hot" : ""}">${d.actual_hr} bpm</span>` : ""}</div></div>
       </div>`;
     }).join("");
   };
@@ -297,8 +329,11 @@ function renderLiftingPlan(plan) {
   $("liftingPlan").innerHTML = markdown(plan.text);
 }
 
+// Latest 4 activities, with a toggle for the rest.
+const ACTIVITY_PREVIEW = 4;
 function renderActivities(recent) {
-  $("activityList").innerHTML = recent.length ? recent.map((a) => `
+  if (!recent.length) return ($("activityList").innerHTML = '<div class="empty">No activities yet. They come from Garmin.</div>');
+  const row = (a) => `
     <div class="row">
       <div class="row-date"><b>${relDay(a.date)}</b>${a.start_local.slice(11, 16)}</div>
       <div class="row-main">
@@ -307,7 +342,10 @@ function renderActivities(recent) {
       </div>
       <div class="row-side">${a.distance_km ? `${a.distance_km} km` : hm(a.duration_s)}
         <div class="muted">${a.avg_hr ? `<span class="${a.type === "running" && a.avg_hr > HR_GUIDE ? "hot" : ""}">${a.avg_hr} bpm</span>` : ""}</div></div>
-    </div>`).join("") : '<div class="empty">No activities yet. They come from Garmin.</div>';
+    </div>`;
+  const rest = recent.slice(ACTIVITY_PREVIEW);
+  $("activityList").innerHTML = recent.slice(0, ACTIVITY_PREVIEW).map(row).join("")
+    + (rest.length ? `<details class="more"><summary>Show ${rest.length} more</summary>${rest.map(row).join("")}</details>` : "");
 }
 
 function renderGym(gym) {
@@ -359,7 +397,24 @@ function blockWeeks(status) {
       </div>`).join("")}</div>`;
 }
 
-function renderBlock(block) {
+// One bar pair per block week: planned vs run minutes.
+let blockChart;
+function drawBlockChart(p) {
+  blockChart?.destroy();
+  blockChart = new Chart($("blockChart"), {
+    type: "bar",
+    data: {
+      labels: p.weeks.map((w) => `${w.label}${w.kind === "deload" ? " (deload)" : ""}`),
+      datasets: [
+        { label: "Planned min", data: p.weeks.map((w) => w.planned_min), backgroundColor: css("--track"), borderRadius: 6 },
+        { label: "Run min", data: p.weeks.map((w) => w.done_min), backgroundColor: css("--run"), borderRadius: 6 },
+      ],
+    },
+    options: { scales: axes({ y: { beginAtZero: true } }) },
+  });
+}
+
+function renderBlock(block, progress) {
   const card = $("blockCard");
   const draw = (view) => {
     const b = { current: block.current, last4: block.last4, since: block.sinceStart }[view];
@@ -387,12 +442,14 @@ function renderBlock(block) {
         ${tile("Weight change", b.weight_change_kg != null ? `${b.weight_change_kg > 0 ? "+" : ""}${b.weight_change_kg}` : null, { unit: "kg" })}
       </div>
       ${view === "current" ? `
-        <div class="caption"><strong>${esc(b.name)}</strong> · day ${Math.min(b.day, b.total_days)} of ${b.total_days} · ${b.runs_done} of ${b.runs_in_block} runs done so far</div>
+        <div class="caption"><strong>${esc(progress?.label ?? b.name)}</strong>${progress?.week ? ` · Week ${progress.week} of ${progress.weeks_total} (${progress.week_kind})` : ""} · day ${Math.min(b.day, b.total_days)} of ${b.total_days} · ${b.runs_done} of ${b.runs_in_block} runs done so far</div>
         <div class="progress"><span style="width:${Math.min(100, (b.runs_done / (b.runs_in_block || 1)) * 100)}%"></span></div>
+        <div class="chart chart-small"><canvas id="blockChart"></canvas></div>
         ${b.status ? blockWeeks(b.status) : ""}
         ${b.success ? `<div class="caption">Success measure: ${esc(b.success)}</div>` : ""}`
       : `<div class="caption">Run adherence ${pct(b.runs_done, b.runs_planned)} · ${b.runs} runs logged in total${prev ? " · ▲▼ vs the 4 weeks before" : ""}</div>`}`;
     card.querySelectorAll("#blockRange button").forEach((btn) => (btn.onclick = () => draw(btn.dataset.v)));
+    if (view === "current" && progress) drawBlockChart(progress);
   };
   if (block?.sinceStart) draw(block.current ? "current" : "last4");
   else card.innerHTML = `${label("Block review", "spark", "--run")}<div class="empty">No plan imported yet.</div>`;
@@ -543,12 +600,88 @@ function renderWeightChart(weights) {
 
 // ---------- Status, alerts, navigation ----------
 
-function renderSync(syncs) {
-  const latest = syncs.reduce((a, s) => (!a || s.started_at > a.started_at ? s : a), null);
-  $("lastSync").textContent = latest
-    ? `Last sync ${new Date(latest.started_at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
-    : "Not synced yet";
-  $("syncList").innerHTML = syncs.map((s) => `<span title="${esc(s.message)}"><span class="dot" style="--c: var(${s.ok ? "--ok" : "--bad"})"></span> ${esc(s.source)}</span>`).join("");
+// Data status: each source's last successful update and any error, the next
+// scheduled sync, when the plan was last edited, and a Sync now button.
+const SOURCE_LABELS = { garmin: "Garmin", withings: "Withings", jefit: "JEFIT", rules: "Rules engine", review: "Block review", coach: "Coach note" };
+const STALE_HOURS = { garmin: 8, withings: 26, jefit: 26 };
+function renderStatus(status) {
+  const latest = status.sources.reduce((a, s) => (!a || s.last_ok > a ? s.last_ok : a), null);
+  $("lastSync").textContent = latest ? `Updated ${relTime(latest)}` : "Not synced yet";
+  $("syncList").innerHTML = status.sources.map((s) => `<span><span class="dot" style="--c: var(${s.last_ok_flag ? "--ok" : "--bad"})"></span> ${esc(SOURCE_LABELS[s.source] ?? s.source)}</span>`).join("");
+
+  const rows = Object.keys(SOURCE_LABELS).map((key) => {
+    const s = status.sources.find((x) => x.source === key);
+    if (!s) return "";
+    const stale = STALE_HOURS[key] && s.last_ok && Date.now() - new Date(s.last_ok) > STALE_HOURS[key] * 3_600_000;
+    const color = !s.last_ok_flag ? "--bad" : stale ? "--warn" : "--ok";
+    return `<div class="status-row" title="${esc(s.last_message ?? "")}">
+      <span class="dot" style="--c: var(${color})"></span>
+      <span class="status-name">${SOURCE_LABELS[key]}</span>
+      <span class="muted">${s.last_ok ? relTime(s.last_ok) : "never"}${!s.last_ok_flag ? ` · last try failed: ${esc((s.last_message ?? "").slice(0, 80))}` : stale ? " · stale" : ""}</span>
+    </div>`;
+  }).join("");
+  const edit = status.plan_last_edit;
+  $("dataStatus").innerHTML = `
+    <div class="card-head">${label("Data status", "spark", "--muted")}
+      <button class="btn" id="syncNow" ${status.syncing ? "disabled" : ""}>${status.syncing ? "Syncing…" : "Sync now"}</button></div>
+    <div class="status-grid">${rows}
+      <div class="status-row"><span class="dot" style="--c: var(--run)"></span><span class="status-name">Running plan</span>
+        <span class="muted">${edit ? `edited ${relTime(edit.at)} by ${esc(edit.author)}` : "no edits yet"}</span></div>
+    </div>
+    <div class="caption">Next sync ${status.next_sync ? clock(status.next_sync) : "—"} · syncs at 6am, 9am, 3pm, 7pm (with the coach) and 10pm</div>`;
+  $("syncNow").onclick = syncNow;
+}
+
+// Sync now (needs the coach PIN), then poll until it's done and reload.
+async function syncNow() {
+  if (!storage.get("coachPin")) {
+    const pin = prompt("Coach PIN");
+    if (!pin) return;
+    storage.set("coachPin", pin.trim());
+  }
+  try {
+    const r = await coachApi("/sync", "POST");
+    if (!r.started) return alert(r.reason);
+    $("syncNow").disabled = true;
+    $("syncNow").textContent = "Syncing…";
+    const poll = setInterval(async () => {
+      const d = await (await fetch("/api/dashboard")).json();
+      if (!d.status.syncing) { clearInterval(poll); location.reload(); }
+    }, 8000);
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// Today's check-in: pain during the run and next morning (0–10), RPE (1–10).
+function renderCheckin(checkins) {
+  const today = todayIso();
+  const c = checkins.find((x) => x.date === today) ?? {};
+  const pick = (name, max, min = 0) => `<select name="${name}"><option value="">–</option>${Array.from({ length: max - min + 1 }, (_, i) => i + min)
+    .map((v) => `<option ${c[name] === v ? "selected" : ""}>${v}</option>`).join("")}</select>`;
+  const recent = checkins.filter((x) => x.date !== today).slice(0, 5);
+  $("checkin").innerHTML = `
+    <div class="card-head">${label("Today's check-in", "heart", "--coach")}<span class="when">${c.date ? "saved" : "pain flag needs this"}</span></div>
+    <form id="checkinForm" class="checkin-form">
+      <label>Pain during run ${pick("pain_during", 10)}</label>
+      <label>Pain this morning ${pick("pain_next_morning", 10)}</label>
+      <label>Session RPE ${pick("rpe", 10, 1)}</label>
+      <input name="note" placeholder="Note (optional)" value="${esc(c.note ?? "")}">
+      <button class="btn" type="submit">Save</button>
+    </form>
+    ${recent.length ? `<div class="caption">${recent.map((r) => `${fmtShort(r.date)}: pain ${r.pain_during ?? "–"}/${r.pain_next_morning ?? "–"}, RPE ${r.rpe ?? "–"}`).join(" · ")}</div>` : ""}`;
+  $("checkinForm").onsubmit = async (e) => {
+    e.preventDefault();
+    if (!storage.get("coachPin")) {
+      const pin = prompt("Coach PIN");
+      if (!pin) return;
+      storage.set("coachPin", pin.trim());
+    }
+    try {
+      await coachApi("/checkin", "POST", { date: today, ...Object.fromEntries(new FormData(e.target)) });
+      $("checkin").querySelector(".when").textContent = "saved";
+    } catch (err) { alert(err.message); }
+  };
 }
 
 // Banner for anything Daniel has to fix himself (expired Garmin session, Withings not connected…).
@@ -602,25 +735,31 @@ function renderChat(chat) {
   $("chatLog").scrollTop = $("chatLog").scrollHeight;
 }
 
+// The engine-generated block the coach prepared: minutes per run day per week.
 function renderProposal(p) {
-  if (!p) return ($("proposal").innerHTML = "");
+  if (!p?.generated) return ($("proposal").innerHTML = "");
+  const g = p.generated;
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const used = days.filter((d) => p.weeks.some((w) => w.runs[d]));
-  const end = new Date(Date.parse(p.start) + (p.weeks.length * 7 - 1) * 86_400_000).toISOString().slice(0, 10);
+  const wd = (iso) => days[(new Date(iso + "T00:00:00").getDay() + 6) % 7];
+  const used = days.filter((d) => g.weeks.some((w) => w.days.some((x) => x.planned_min && wd(x.date) === d)));
+  const cell = (w, d) => {
+    const x = w.days.find((y) => y.planned_min && wd(y.date) === d);
+    return x ? `${x.planned_min}′${x.session === "benchmark" ? " TT" : x.session === "strides" ? " +s" : x.session === "long" ? " L" : x.session === "quality" ? " Q" : ""}` : "";
+  };
   $("proposal").innerHTML = `
     <div class="proposal">
-      <div class="row-title">${esc(p.name)} · ${fmtShort(p.start)} – ${fmtShort(end)} · ${p.weeks.length} weeks</div>
+      <div class="row-title">${esc(p.name)} · ${esc(p.block_type.replace("FITNESS_", "").toLowerCase())} · ${fmtShort(g.start)} – ${fmtShort(g.end)} · ${g.weeks.length} weeks</div>
       <p>${esc(p.summary)}</p>
       <div class="table-scroll"><table class="weeks">
-        <tr><th>Week</th>${used.map((d) => `<th>${d}</th>`).join("")}<th>Total</th><th>Objective</th></tr>
-        ${p.weeks.map((w) => `<tr><td>${esc(w.label)}</td>${used.map((d) => `<td>${w.runs[d] ?? ""}</td>`).join("")}
-          <td><b>${Object.values(w.runs).reduce((a, b) => a + b, 0).toFixed(1)}</b></td><td>${esc(w.objective)}</td></tr>`).join("")}
+        <tr><th>Week</th>${used.map((d) => `<th>${d}</th>`).join("")}<th>Total</th></tr>
+        ${g.weeks.map((w) => `<tr><td>${esc(w.label)}${w.kind === "deload" ? " (deload)" : ""}</td>${used.map((d) => `<td>${cell(w, d)}</td>`).join("")}<td><b>${w.total_min}′</b></td></tr>`).join("")}
       </table></div>
+      <div class="caption">L long run · +s strides · TT 30-min benchmark · Q quality. Minutes; ≈km at ${g.pace_min_per_km} min/km.</div>
       <details><summary>Rules (${p.rules.length}) · success measure</summary><ul>${p.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul><p><strong>Success:</strong> ${esc(p.success)}</p></details>
       <button class="btn" id="lockIn">Lock in this block</button>
     </div>`;
   $("lockIn").onclick = async () => {
-    if (!confirm(`Lock in "${p.name}"? It replaces the plan from ${fmtShort(p.start)}.`)) return;
+    if (!confirm(`Lock in "${p.name}"? It becomes the plan from ${fmtShort(g.start)}.`)) return;
     try {
       await coachApi(`/chat/${chatId}/lock`, "POST");
       location.reload();
@@ -690,7 +829,8 @@ async function main() {
   const res = await fetch("/api/dashboard");
   if (!res.ok) throw new Error(`API returned ${res.status}`);
   const data = await res.json();
-  renderSync(data.syncs);
+  renderStatus(data.status);
+  renderCheckin(data.checkins ?? []);
   renderAlerts(data.alerts);
   renderHealth(data);
   renderNote(data.note);
@@ -699,7 +839,7 @@ async function main() {
   renderPlanChanges(data.planChanges ?? []);
   renderLiftingPlan(data.liftingPlan);
   renderActivities(data.recent);
-  renderBlock(data.block);
+  renderBlock(data.block, data.blockProgress);
   renderGymPlan(data.gymPlan, data.gymLastDone ?? {});
   renderGym(data.gym);
   renderCharts(data);

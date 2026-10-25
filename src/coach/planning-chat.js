@@ -1,64 +1,37 @@
-// The planning chat: Daniel presses "Plan next block", the coach proposes a block
-// from his history, they discuss it, and Daniel locks it in. The coach proposes
-// through a `propose_block` tool; nothing changes in the plan until lockIn().
+// The planning chat: Daniel presses "Plan next block", the coach explains the
+// rules engine's end-of-block review and recommendation, they discuss it, and
+// Daniel locks it in. Per docs/coach-rules.md the engine decides volumes: the
+// coach can only pick a block type (and runs per week) through `prepare_block`,
+// and the engine generates it within the guardrails. Nothing changes in the
+// plan until lockIn().
 
 import Anthropic from "@anthropic-ai/sdk";
 import * as z from "zod";
 import { getSetting, query } from "../db.js";
-import { activeBlock, createBlock } from "../plan/store.js";
+import { activeBlock, startBlock } from "../plan/store.js";
 import { blockStatus } from "../plan/status.js";
 import { blockSummary } from "../block.js";
+import { blockRules, generateBlock } from "./blocks.js";
+import { reviewBlock, TYPE_LABEL } from "./review.js";
+import { BLOCK_TYPES } from "./config.js";
 
 const MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-5-5";
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ ?? "Australia/Melbourne" });
 
-// What a proposal must contain; also what createBlock() takes.
-const Proposal = z.object({
-  name: z.string().min(1),
-  start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  summary: z.string(),
-  rules: z.array(z.string()),
-  success: z.string(),
-  hr_guide: z.string(),
-  shoe: z.string(),
-  gym_by_weekday: z.record(z.string(), z.string()),
-  weeks: z.array(z.object({
-    label: z.string(),
-    // partialRecord: only run days appear (a plain record over an enum would demand all 7 days).
-    runs: z.partialRecord(z.enum(WEEKDAYS), z.number().positive()).refine((r) => Object.keys(r).length > 0, "at least one run"),
-    objective: z.string(),
-  })).min(1).max(16),
-});
-
-const PROPOSE_TOOL = {
-  name: "propose_block",
-  description: "Show Daniel a proposed training block as a card he can lock in. Call it whenever you propose or revise the plan; the latest call replaces the previous proposal. Daniel locks it in himself with a button.",
+const PREPARE_TOOL = {
+  name: "prepare_block",
+  description: "Generate the next block with the rules engine and show it to Daniel as a card he can lock in. Pick the engine's recommended type unless Daniel chooses an alternative. Volumes come from the engine; you can only lower the starting volume or change runs per week if Daniel asks. Call again to revise; the latest card replaces the previous one.",
   input_schema: {
     type: "object",
     properties: {
-      name: { type: "string", description: "Unique, descriptive, e.g. 'Base block 2'" },
-      start: { type: "string", description: `YYYY-MM-DD, today or later (today is passed in the context)` },
-      summary: { type: "string", description: "What the block is for, in two or three sentences" },
-      rules: { type: "array", items: { type: "string" }, description: "The block's rules: effort, HR guide, progression, recovery gate, missed-run policy" },
-      success: { type: "string", description: "How we'll judge the block at the end" },
-      hr_guide: { type: "string", description: "Shown on every run, e.g. 'Aim <148 bpm'" },
-      shoe: { type: "string" },
-      gym_by_weekday: { type: "object", additionalProperties: { type: "string" }, description: "Gym session per weekday (Mon…Sun), unchanged unless Daniel agrees" },
-      weeks: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            label: { type: "string" },
-            runs: { type: "object", additionalProperties: { type: "number" }, description: "Distance in km by weekday, e.g. { \"Tue\": 3.5, \"Thu\": 3.5, \"Sat\": 4.2 }" },
-            objective: { type: "string" },
-          },
-          required: ["label", "runs", "objective"],
-        },
-      },
+      block_type: { type: "string", enum: BLOCK_TYPES.filter((t) => t !== "RETURN_TO_RUN") },
+      name: { type: "string", description: "Unique, e.g. 'Base block 2'" },
+      summary: { type: "string", description: "Two or three sentences: what this block is for and why, from the review" },
+      runs_per_week: { type: "integer", minimum: 3, maximum: 5, description: "Only if Daniel asks to change it" },
+      first_week_min: { type: "number", description: "Only to lower the engine's starting volume at Daniel's request" },
     },
-    required: ["name", "start", "summary", "rules", "success", "hr_guide", "shoe", "gym_by_weekday", "weeks"],
+    required: ["block_type", "name", "summary"],
   },
 };
 
@@ -70,6 +43,9 @@ async function planningContext() {
   return {
     today: day,
     active_block: active && { ...active, status: await blockStatus(active, day), so_far: await blockSummary(active.start, day < active.end ? day : active.end) },
+    // The engine's end-of-block review and recommendation (or a provisional one
+    // if the block isn't over yet). Generated days are trimmed to week totals.
+    review: trimReview(await currentReview(active, day)),
     past_blocks: blocks,
     // Week-by-week adherence for the whole plan history.
     plan_weeks: await query(
@@ -89,30 +65,83 @@ async function planningContext() {
   };
 }
 
+// The stored end-of-block review, or a provisional one as of today.
+async function currentReview(active, day) {
+  if (!active) return null;
+  if (active.review) return { ...active.review, provisional: false };
+  return { ...(await reviewBlock({ ...active, end: day < active.end ? day : active.end })), provisional: true };
+}
+const weekTotals = (b) => b && { start: b.start, end: b.end, runs_per_week: b.runs_per_week, weeks: b.weeks.map((w) => `${w.label} ${w.kind} ${w.total_min} min`) };
+const trimReview = (r) => r && {
+  ...r,
+  recommended_block: { ...r.recommended_block, block: weekTotals(r.recommended_block.block) },
+  alternatives: r.alternatives.map((a) => ({ ...a, block: weekTotals(a.block) })),
+};
+
 async function systemPrompt() {
   const [rules, profile] = await Promise.all([getSetting("coach_instructions"), getSetting("athlete_profile")]);
   return [
     { type: "text", text: rules ?? "" },
     { type: "text", text: `# Athlete profile\n\n${profile ?? ""}`, cache_control: { type: "ephemeral" } },
     { type: "text", text:
-      "You are planning Daniel's next training block with him in a chat on his dashboard. Open by explaining briefly how the " +
-      "current block went (from the data), then propose a block with propose_block. Keep messages short and conversational. " +
-      "Revise with propose_block whenever you change the plan. Daniel locks it in himself; don't claim it is saved. " +
-      "A block has a fixed number of weeks; it will be flagged for a new plan if it stalls for two weeks (fewer than half " +
-      "the planned runs done) or when it ends, so set targets he can actually complete. Leave the gym schedule as it is unless he asks." },
+      "You are planning Daniel's next training block with him in a chat on his dashboard. His coach rules spec decides the " +
+      "next block: the `review` in the data is the rules engine's end-of-block review (progress, recovery, decision, the " +
+      "recommended block type and up to two alternatives). If review.provisional is true the block isn't over yet; say so. " +
+      "Open by explaining the review in plain words, then call prepare_block with the recommended type. Keep messages short " +
+      "and conversational. If Daniel prefers an alternative or fewer runs, call prepare_block again; the engine applies the " +
+      "guardrails and tells you if it changed his choice, and you pass that on. Daniel locks the card in himself; don't claim it is saved." },
   ];
 }
 
 const textOf = (content) => (typeof content === "string" ? content : content.filter((b) => b.type === "text").map((b) => b.text).join("\n"));
 
-// Runs Claude until it finishes its turn, executing propose_block calls.
+// Generates a block with the engine for the coach's choice, applying the
+// guardrails (locked types, volume never above the engine's figure).
+async function prepare(input, chat) {
+  const day = today();
+  const active = await activeBlock();
+  const review = await currentReview(active, day);
+  const status = active && await blockStatus(active, day);
+  let type = input.block_type, note = null;
+  if (!review.gate.open && !["FITNESS_BASE", "FITNESS_ENDURANCE"].includes(type)) {
+    note = `${TYPE_LABEL[type]} is locked until the tissue-readiness gate opens (12 weeks at ≥90% completion with no pain, and a 75-min long run or 180 min/week). Changed to Base.`;
+    type = "FITNESS_BASE";
+  }
+  const engineMin = review.next_block.first_week_min;
+  const firstWeekMin = Math.min(input.first_week_min ?? engineMin, engineMin);
+  if (input.first_week_min > engineMin) note = [note, `Starting volume capped at the engine's ${engineMin} min.`].filter(Boolean).join(" ");
+  // Starts after the current block, or tomorrow if that block is over or stalled.
+  const tomorrow = new Date(Date.parse(day) + 86_400_000).toISOString().slice(0, 10);
+  const afterCurrent = active ? new Date(Date.parse(active.end) + 86_400_000).toISOString().slice(0, 10) : tomorrow;
+  const start = status?.new_plan_due || afterCurrent < tomorrow ? tomorrow : afterCurrent;
+  // The current block's longest planned long run, for the "+10 min per week" long-run rule.
+  const [{ long }] = await query(
+    `select max(d.planned_min) as long from plan_days d join plan_weeks w on w.start_date = d.week_start where w.block = $1 and d.session = 'long'`,
+    [active?.name ?? ""]);
+  const generated = await generateBlock({
+    type, start, firstWeekMin, labelPrefix: "B",
+    runsPerWeek: input.runs_per_week ?? review.next_block.runs_per_week,
+    prevLongMin: long == null ? null : Number(long),
+  });
+  return {
+    note,
+    proposal: {
+      name: input.name, block_type: type, summary: input.summary,
+      rules: blockRules(type, generated.runs_per_week),
+      success: "At least 80% of planned runs completed, and the 30-min benchmark in the deload week compared with the last block's.",
+      generated,
+    },
+  };
+}
+
+// Runs Claude until it finishes its turn, executing prepare_block calls.
 async function runTurn(chat) {
   const client = new Anthropic();
   const system = await systemPrompt();
   for (let i = 0; i < 4; i++) {
     const response = await client.messages.create({
       model: MODEL, max_tokens: 16000, output_config: { effort: "medium" },
-      system, tools: [PROPOSE_TOOL], messages: chat.messages,
+      system, tools: [PREPARE_TOOL], messages: chat.messages,
     });
     if (response.stop_reason === "refusal") throw new Error("The coach declined to answer that.");
     // Appended exactly as returned, so thinking blocks replay unchanged next turn.
@@ -120,13 +149,16 @@ async function runTurn(chat) {
     const calls = response.content.filter((b) => b.type === "tool_use");
     if (!calls.length) return;
 
-    const results = calls.map((call) => {
-      const parsed = Proposal.safeParse(call.input);
-      if (!parsed.success) return { type: "tool_result", tool_use_id: call.id, is_error: true, content: `Invalid proposal: ${parsed.error.message}` };
-      if (parsed.data.start < today()) return { type: "tool_result", tool_use_id: call.id, is_error: true, content: `start must be ${today()} or later` };
-      chat.proposal = parsed.data;
-      return { type: "tool_result", tool_use_id: call.id, content: "Shown to Daniel as a card. He can lock it in or ask for changes." };
-    });
+    const results = [];
+    for (const call of calls) {
+      try {
+        const { proposal, note } = await prepare(call.input, chat);
+        chat.proposal = proposal;
+        results.push({ type: "tool_result", tool_use_id: call.id, content: JSON.stringify({ shown_to_daniel: weekTotals(proposal.generated), block_type: proposal.block_type, guardrail_note: note }) });
+      } catch (err) {
+        results.push({ type: "tool_result", tool_use_id: call.id, is_error: true, content: err.message });
+      }
+    }
     chat.messages.push({ role: "user", content: results });
   }
 }
@@ -176,7 +208,7 @@ export async function sendMessage(id, text) {
 export async function lockIn(id) {
   const [chat] = await query(`select * from coach_chats where id = $1 and status = 'open'`, [id]);
   if (!chat?.proposal) throw new Error("There's no proposal to lock in yet.");
-  await createBlock(chat.proposal, { author: "Daniel (planning chat)", reason: `Agreed in planning chat #${id}: ${chat.proposal.summary}` });
+  await startBlock(chat.proposal, { author: "Daniel (planning chat)", reason: `Agreed in planning chat #${id}: ${chat.proposal.summary}` });
   await query(`update coach_chats set status = 'locked', block_name = $2 where id = $1`, [id, chat.proposal.name]);
   return { locked: chat.proposal.name };
 }

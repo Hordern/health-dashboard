@@ -12,7 +12,7 @@ end
 $$;
 
 grant usage on schema public to dashboard_reader;
-grant select on activities, health_daily, weights, gym_sessions, plan_weeks, plan_days, coaching_notes, training_blocks, plan_changes to dashboard_reader;
+grant select on activities, health_daily, weights, gym_sessions, plan_weeks, plan_days, coaching_notes, training_blocks, plan_changes, checkins, readiness to dashboard_reader;
 revoke all on settings, sync_runs from dashboard_reader;
 alter role dashboard_reader set statement_timeout = '5s';
 alter role dashboard_reader set default_transaction_read_only = on;

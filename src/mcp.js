@@ -12,6 +12,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { getSetting, query } from "./db.js";
 import { blockReview, blockSummary } from "./block.js";
 import { DAY_FIELDS, STATUSES, createBlock, moveRun, recentChanges, setLiftingPlan, updateBlock, updatePlanDay } from "./plan/store.js";
+import { recentCheckins, saveCheckin } from "./coach/checkins.js";
 
 const MAX_ROWS = 500; // keeps a tool result small enough for Claude's context
 
@@ -115,6 +116,16 @@ function buildServer({ canWrite }) {
     inputSchema: { limit: z.number().int().min(1).max(200).default(30) },
   }, async ({ limit }) => json(await recentChanges(limit)));
 
+  server.registerTool("readiness", {
+    description: "The rules engine's daily recovery flags (RHR_HIGH, HRV_LOW, SLEEP_LOW, MISSED, PAIN) with evidence, and the actions it took. See docs/coach-rules.md section 4.",
+    inputSchema: range,
+  }, async ({ from, to }) => rows(`select date::text, flags, actions from readiness where date between $1 and $2 order by date`, [from, to]));
+
+  server.registerTool("checkins", {
+    description: "Daniel's daily check-ins: pain during running and next morning (0–10), RPE (1–10), note.",
+    inputSchema: { days: z.number().int().min(1).max(120).default(14) },
+  }, async ({ days }) => json(await recentCheckins(days)));
+
   server.registerTool("lifting_plan", {
     description: "Daniel's lifting plan (free text he maintains), separate from the JEFIT routine in gym_plan.",
   }, async () => json(await getSetting("lifting_plan")));
@@ -125,7 +136,7 @@ function buildServer({ canWrite }) {
   }, async ({ from, to }) => rows(`select date::text, body from coaching_notes where date between $1 and $2 order by date`, [from, to]));
 
   server.registerTool("sql_query", {
-    description: `Run one read-only SQL SELECT (PostgreSQL) for questions the other tools don't cover. Tables: activities(date, start_local, type, name, distance_km, duration_s, avg_hr, max_hr, elevation_gain_m, training_effect_label, raw jsonb), health_daily(date, resting_hr, hrv_last_night, hrv_status, readiness_score, readiness_level, acute_load, sleep_score, sleep_s, deep_s, light_s, rem_s, awake_s, raw jsonb), weights(measured_at, weight_kg, fat_ratio, muscle_kg), gym_sessions(date, name, exercises jsonb [{name, record_type, sets:[{type, weight_kg, reps}]}]), plan_weeks(start_date, end_date, label, planned_total_km, summary), plan_days(date, week_start, gym, run_type, planned_km, hr_guide, shoe, status, notes), coaching_notes(date, body), training_blocks(name, start_date, end_date, summary, rules, success, active), plan_changes(at, author, action, target, before, after, reason). Results are capped at ${MAX_ROWS} rows and 5 seconds.`,
+    description: `Run one read-only SQL SELECT (PostgreSQL) for questions the other tools don't cover. Tables: activities(date, start_local, type, name, distance_km, duration_s, avg_hr, max_hr, elevation_gain_m, training_effect_label, raw jsonb), health_daily(date, resting_hr, hrv_last_night, hrv_status, readiness_score, readiness_level, acute_load, sleep_score, sleep_s, deep_s, light_s, rem_s, awake_s, raw jsonb), weights(measured_at, weight_kg, fat_ratio, muscle_kg), gym_sessions(date, name, exercises jsonb [{name, record_type, sets:[{type, weight_kg, reps}]}]), plan_weeks(start_date, end_date, label, planned_total_km, summary), plan_days(date, week_start, gym, run_type, planned_min, planned_km, session, hr_guide, shoe, status, notes), coaching_notes(date, body), training_blocks(name, block_type, start_date, end_date, summary, rules, success, active, review jsonb), checkins(date, pain_during, pain_next_morning, rpe, note), readiness(date, flags, actions), plan_changes(at, author, action, target, before, after, reason). Results are capped at ${MAX_ROWS} rows and 5 seconds.`,
     inputSchema: { sql: z.string().describe("A single SELECT statement") },
   }, async ({ sql }) => {
     const pool = reader();
@@ -154,8 +165,10 @@ function buildServer({ canWrite }) {
 function registerWriteTools(server) {
   const dayChanges = z.object({
     gym: z.string().nullable().optional(),
-    run_type: z.string().nullable().optional().describe("e.g. 'Easy', 'Long', or null for no run"),
-    planned_km: z.number().nullable().optional(),
+    run_type: z.string().nullable().optional().describe("e.g. 'Easy run', 'Long easy run', or null for no run"),
+    planned_min: z.number().int().nullable().optional().describe("Planned minutes — runs are planned by time"),
+    planned_km: z.number().nullable().optional().describe("Estimate only"),
+    session: z.enum(["easy", "long", "strides", "benchmark", "quality", "cross"]).nullable().optional(),
     hr_guide: z.string().nullable().optional().describe("e.g. 'Aim <148 bpm'"),
     shoe: z.string().nullable().optional(),
     status: z.enum(STATUSES).optional(),
@@ -179,7 +192,7 @@ function registerWriteTools(server) {
   }, async ({ from, to, author, reason }) => attempt(() => moveRun(from, to, { author, reason })));
 
   server.registerTool("create_block", {
-    description: "Start a new training block. Its weeks replace the plan from `start` onward (earlier days stay as history) and it becomes the active block. Each week gives run distances by weekday, e.g. { label: 'R1', runs: { Tue: 3.5, Thu: 3.5, Sat: 4.2 }, objective: '…' }.",
+    description: "Manual override: start a block from hand-written weekly distances. Normally new blocks come from the dashboard's planning chat, where the rules engine generates them. Its weeks replace the plan from `start` onward (earlier days stay as history) and it becomes the active block. Each week gives run distances by weekday, e.g. { label: 'R1', runs: { Tue: 3.5, Thu: 3.5, Sat: 4.2 }, objective: '…' }.",
     inputSchema: {
       name: z.string(), start: date,
       summary: z.string().optional(), rules: z.array(z.string()).optional(), success: z.string().optional(),
@@ -198,6 +211,18 @@ function registerWriteTools(server) {
       ...meta,
     },
   }, async ({ name, changes, author, reason }) => attempt(() => updateBlock(name, changes, { author, reason })));
+
+  server.registerTool("log_checkin", {
+    description: "Record Daniel's check-in for a day: pain during running (0–10), next-morning pain (0–10), RPE (1–10), note. Only send the fields he gave. Pain ≥ 4 trips the PAIN flag at the next rules check.",
+    inputSchema: {
+      date,
+      pain_during: z.number().int().min(0).max(10).optional(),
+      pain_next_morning: z.number().int().min(0).max(10).optional(),
+      rpe: z.number().int().min(1).max(10).optional(),
+      note: z.string().optional(),
+      author: meta.author,
+    },
+  }, async ({ date: d, author, ...values }) => attempt(() => saveCheckin(d, values, author)));
 
   server.registerTool("set_lifting_plan", {
     description: "Replace Daniel's lifting plan text (markdown). Read lifting_plan first and send the whole updated text.",

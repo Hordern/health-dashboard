@@ -5,7 +5,7 @@
 
 import { pool, query } from "../db.js";
 
-export const DAY_FIELDS = ["gym", "run_type", "planned_km", "hr_guide", "shoe", "status", "notes"];
+export const DAY_FIELDS = ["gym", "run_type", "planned_min", "planned_km", "session", "hr_guide", "shoe", "status", "notes"];
 export const STATUSES = ["upcoming", "done", "flag", "missed"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -139,6 +139,74 @@ export async function createBlock(spec, meta) {
   });
 }
 
+// Writes generated weeks (from src/coach/blocks.js: dated days in minutes) into
+// a block from `fromDate` onward, replacing that block's days from that date.
+async function writeGeneratedWeeks(client, name, fromDate, weeks, author) {
+  await client.query(`delete from plan_days d using plan_weeks w where d.week_start = w.start_date and w.block = $1 and d.date >= $2`, [name, fromDate]);
+  await client.query(`delete from plan_weeks w where w.block = $1 and not exists (select 1 from plan_days d where d.week_start = w.start_date)`, [name]);
+  for (const w of weeks) {
+    await client.query(
+      `insert into plan_weeks (start_date, end_date, label, planned_total_km, summary, block, kind) values ($1, $2, $3, null, $4, $5, $6)
+       on conflict (start_date) do update set end_date = excluded.end_date, label = excluded.label, summary = excluded.summary, block = excluded.block, kind = excluded.kind`,
+      [w.start, addDays(w.start, 6), w.label, w.objective ?? null, name, w.kind ?? null],
+    );
+    for (const d of w.days.filter((day) => day.date >= fromDate)) {
+      await client.query(
+        `insert into plan_days (date, week_start, gym, run_type, planned_min, planned_km, session, hr_guide, shoe, notes, status, updated_at, updated_by)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'upcoming', now(), $11)`,
+        [d.date, w.start, d.gym ?? null, d.run_type ?? null, d.planned_min ?? null, d.planned_km ?? null, d.session ?? null,
+          d.hr_guide ?? null, d.shoe ?? null, d.notes ?? null, author],
+      );
+    }
+    await refreshWeekTotal(client, w.start);
+  }
+}
+
+// Rewrites a block from `fromDate` onward with generated weeks. Days before
+// `fromDate` are kept as history, so a block can be re-cut part-way through.
+// `blockPatch` can set the block's end_date, block_type, summary, rules, success.
+export async function regenerateBlock(name, fromDate, weeks, blockPatch, meta) {
+  requireMeta(meta);
+  return transaction(async (client) => {
+    const [block] = (await client.query(`select * from training_blocks where name = $1 for update`, [name])).rows;
+    if (!block) throw new Error(`No block called "${name}"`);
+    await writeGeneratedWeeks(client, name, fromDate, weeks, meta.author);
+    const fields = ["end_date", "block_type", "summary", "rules", "success"].filter((f) => blockPatch?.[f] !== undefined);
+    if (fields.length) {
+      const value = (f) => (f === "rules" ? JSON.stringify(blockPatch[f]) : blockPatch[f]);
+      await client.query(`update training_blocks set ${fields.map((f, i) => `${f} = $${i + 2}`).join(", ")} where name = $1`, [name, ...fields.map(value)]);
+    }
+    await logChange(client, meta, "regenerate_block", `${name} from ${fromDate}`,
+      { end_date: block.end_date, block_type: block.block_type },
+      { ...blockPatch, weeks: weeks.map((w) => `${w.label} ${w.start} ${w.total_min} min`) });
+    return { name, from: fromDate, weeks: weeks.length };
+  });
+}
+
+// Starts a new block from engine output (the planning chat's lock-in). It
+// becomes the active block and owns every plan day from its start date; any
+// later days of the previous block are dropped (earlier days stay as history).
+export async function startBlock({ name, block_type, generated, summary = null, rules = [], success = null }, meta) {
+  requireMeta(meta);
+  const todayMelbourne = new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ ?? "Australia/Melbourne" });
+  if (generated.start < todayMelbourne) throw new Error(`start (${generated.start}) can't be in the past; it would overwrite history`);
+  return transaction(async (client) => {
+    await client.query(`update training_blocks set active = false`);
+    await client.query(
+      `insert into training_blocks (name, start_date, end_date, summary, rules, success, active, block_type) values ($1, $2, $3, $4, $5, $6, true, $7)`,
+      [name, generated.start, generated.end, summary, JSON.stringify(rules), success, block_type],
+    );
+    await client.query(`delete from plan_days where date >= $1`, [generated.start]);
+    await client.query(`delete from plan_weeks w where not exists (select 1 from plan_days d where d.week_start = w.start_date)`);
+    await client.query(`update plan_weeks w set end_date = (select max(date) from plan_days d where d.week_start = w.start_date)`);
+    await client.query(`update training_blocks b set end_date = least(b.end_date, $1::date - 1) where name <> $2 and end_date >= $1`, [generated.start, name]);
+    await writeGeneratedWeeks(client, name, generated.start, generated.weeks, meta.author);
+    await logChange(client, meta, "start_block", name, null,
+      { block_type, start: generated.start, end: generated.end, weeks: generated.weeks.map((w) => `${w.label} ${w.total_min} min`) });
+    return { name, start: generated.start, end: generated.end };
+  });
+}
+
 // Edit a block's description, rules, success measure or which block is active.
 export async function updateBlock(name, patch, meta) {
   requireMeta(meta);
@@ -178,7 +246,7 @@ export async function setLiftingPlan(text, meta) {
 
 export async function activeBlock() {
   const [block] = await query(
-    `select name, start_date::text as start, end_date::text as "end", summary, rules, success from training_blocks where active`);
+    `select name, block_type, start_date::text as start, end_date::text as "end", summary, rules, success, review, review_at from training_blocks where active`);
   return block ?? null;
 }
 
