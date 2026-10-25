@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import express from "express";
-import { getSetting, query, setSetting } from "./db.js";
+import { getSetting, query } from "./db.js";
 import { authorizeUrl, completeAuthorization, RECONNECT_FLAG, TOKEN_KEY as WITHINGS_TOKEN_KEY } from "./sources/withings.js";
 import { SIGN_IN_FLAG } from "./sources/garmin.js";
 
@@ -80,13 +80,18 @@ app.get("/api/dashboard", async (_req, res, next) => {
 });
 
 // Only usable until Withings is connected, so a visitor can't swap in their own
-// account when the dashboard has no password. To reconnect, delete the
-// withings_tokens row from settings first.
+// account when the dashboard has no password. If Withings later rejects the
+// saved tokens, the daily sync deletes them, which reopens this route.
+//
+// The OAuth state lives in a short-lived cookie in the visitor's own browser, so
+// another visit to /withings/connect can't overwrite it mid-flow.
+const STATE_COOKIE = "withings_oauth_state";
+
 app.get("/withings/connect", async (_req, res, next) => {
   try {
     if (await getSetting(WITHINGS_TOKEN_KEY)) return res.status(409).send("Withings is already connected.");
     const state = crypto.randomUUID();
-    await setSetting("withings_oauth_state", state);
+    res.cookie(STATE_COOKIE, state, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 10 * 60_000 });
     res.redirect(await authorizeUrl(state));
   } catch (err) {
     next(err);
@@ -97,8 +102,13 @@ app.get("/withings/callback", async (req, res, next) => {
   try {
     // Withings' "Test URL reachability" button calls this with no code; answer 200 so the test passes.
     if (!req.query.code) return res.send("Withings callback is reachable.");
-    if (req.query.state !== (await getSetting("withings_oauth_state"))) return res.status(400).send("State mismatch — start again at /withings/connect");
+    if (await getSetting(WITHINGS_TOKEN_KEY)) return res.status(409).send("Withings is already connected.");
+    const cookieState = (req.headers.cookie ?? "").match(new RegExp(`(?:^|; )${STATE_COOKIE}=([^;]+)`))?.[1];
+    if (!cookieState || req.query.state !== cookieState) {
+      return res.status(400).send('Withings sign-in expired or was started elsewhere. <a href="/withings/connect">Try again</a>');
+    }
     await completeAuthorization(String(req.query.code));
+    res.clearCookie(STATE_COOKIE);
     res.send('Withings connected. Weights will appear after the next daily sync. <a href="/">Back to dashboard</a>');
   } catch (err) {
     next(err);
