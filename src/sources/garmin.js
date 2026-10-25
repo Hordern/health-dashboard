@@ -15,9 +15,9 @@ const SCRIPT = fileURLToPath(new URL("./garmin_fetch.py", import.meta.url));
 const LOCAL_VENV = fileURLToPath(new URL("../../.venv/bin/python", import.meta.url));
 const PYTHON = process.env.PYTHON ?? (existsSync(LOCAL_VENV) ? LOCAL_VENV : "python3");
 
-export function runGarminScript(mode, input, { interactive = false } = {}) {
+export function runGarminScript(mode, input, { interactive = false, args = [] } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(PYTHON, [SCRIPT, mode], {
+    const child = spawn(PYTHON, [SCRIPT, mode, ...args], {
       stdio: [interactive ? "inherit" : "pipe", "pipe", "inherit"],
     });
     let out = "";

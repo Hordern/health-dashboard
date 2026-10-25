@@ -5,6 +5,9 @@ that gets past Garmin's 2026 anti-bot checks. All database work stays in Node
 (src/sources/garmin.js), which runs this script and reads its stdout.
 
   login   Prompts for email/password/MFA on the terminal, prints session tokens.
+  import  Reuses an existing local session (default ~/.garminconnect, the one
+          the Garmin MCP keeps), checks it works, prints its tokens. Use this
+          when Garmin rate-limits fresh logins (429).
   fetch   Reads {"tokens", "start", "end"} on stdin and prints
           {"tokens", "activities", "days"}. Tokens are re-printed because the
           library refreshes them, and the caller must store the new ones.
@@ -29,6 +32,15 @@ def login():
     password = getpass.getpass("Garmin password: ")
     garmin = Garmin(email, password, prompt_mfa=lambda: prompt("Garmin MFA code: "))
     garmin.login()
+    print(garmin.client.dumps())
+
+
+def import_session():
+    # login() with a tokenstore loads the saved session (refreshing it if needed)
+    # and loads the profile, so a dead session fails here rather than later.
+    path = sys.argv[2] if len(sys.argv) > 2 else "~/.garminconnect"
+    garmin = Garmin()
+    garmin.login(tokenstore=path)
     print(garmin.client.dumps())
 
 
@@ -67,4 +79,4 @@ def fetch():
 
 
 if __name__ == "__main__":
-    {"login": login, "fetch": fetch}[sys.argv[1]]()
+    {"login": login, "import": import_session, "fetch": fetch}[sys.argv[1]]()
