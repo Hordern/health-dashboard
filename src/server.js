@@ -38,8 +38,12 @@ app.get("/api/dashboard", async (_req, res, next) => {
   }
 });
 
+// Only usable until Withings is connected, so a visitor can't swap in their own
+// account when the dashboard has no password. To reconnect, delete the
+// withings_tokens row from settings first.
 app.get("/withings/connect", async (_req, res, next) => {
   try {
+    if (await getSetting("withings_tokens")) return res.status(409).send("Withings is already connected.");
     const state = crypto.randomUUID();
     await setSetting("withings_oauth_state", state);
     res.redirect(await authorizeUrl(state));
