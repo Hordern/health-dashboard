@@ -57,6 +57,27 @@ database writes. Each source's last result shows at the top of the dashboard.
    `https://<domain>/withings/callback`, then visit `https://<domain>/withings/connect`
    (it only works while Withings is not yet connected).
 
+## The plan: where it lives and who edits it
+
+The database is the master copy of the running plan (`plan_weeks`, `plan_days`),
+the training blocks (`training_blocks`) and the lifting plan. Every edit goes
+through `src/plan/store.js` and is logged in `plan_changes` with its author and
+reason; the dashboard shows the log under Coach → Running plan.
+
+- **Nightly coach** (`src/coach/nightly-coach.js`, 8pm): writes the note,
+  reviews each unreviewed past run day (status + comment), and may adjust
+  upcoming distances with a reason. It never moves runs or rewrites blocks.
+- **Daniel / other agents**: through the connector's write URL (below) —
+  update a day, move a run, comment on a run, create/update a block, set the
+  lifting plan.
+- **New blocks**: a block has a fixed number of weeks. A finished week with
+  under half its planned runs done is "stalled"; two stalled weeks in a row, or
+  the block's end date, flags "new plan due". The next block is agreed in the
+  dashboard's planning chat (Coach → Plan next block, `COACH_PIN` required):
+  the coach proposes, Daniel discusses, then locks it in.
+- `npm run import-plan` was the one-time migration from CURRENT_PLAN.md and
+  refuses to run once edits exist (`--force` to override).
+
 ## Ask Claude about the data (claude.ai connector)
 
 The web service also runs a read-only MCP server at `/mcp/<MCP_KEY>`
@@ -66,7 +87,10 @@ the athlete profile/coaching rules, and a `sql_query` tool. SQL runs as the
 `dashboard_reader` login (`db/readonly.sql`): SELECT on data tables only, no
 access to `settings` (tokens), read-only transactions, one statement, 5 s cap.
 
-Setup: set `MCP_KEY` and `READONLY_DB_PASSWORD` on the web service, run
+A second URL, `/mcp/<MCP_WRITE_KEY>`, adds the plan editing tools (every edit
+needs an author and a reason and is logged).
+
+Setup: set `MCP_KEY`, `MCP_WRITE_KEY` and `READONLY_DB_PASSWORD` on the web service, run
 `npm run migrate` (creates the role), then in claude.ai → Settings → Connectors
 → Add custom connector, use `https://<domain>/mcp/<MCP_KEY>`. The key is the
 only access control, so keep the URL private.
