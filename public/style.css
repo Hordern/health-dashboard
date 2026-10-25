@@ -83,8 +83,8 @@ section:first-of-type h2 { margin-top: 0; }
 
 /* Cards. */
 .cards { display: grid; gap: 14px; margin-bottom: 14px; }
-.cards-3 { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
-.cards-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.cards-3 { grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); }
+.cards-2 { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); }
 .cards-week { grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr); }
 .card {
   background: var(--card); border-radius: 22px; padding: 16px 18px 18px; box-shadow: var(--shadow);
@@ -94,7 +94,7 @@ section:first-of-type h2 { margin-top: 0; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
 .label { display: inline-flex; align-items: center; gap: 6px; color: var(--c); font-weight: 600; font-size: 15px; }
 .label svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.when { font-size: 13px; color: var(--muted); white-space: nowrap; }
+.when { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 
 /* Metric card: number on the left, its gauge or sparkline on the right. */
 .metric { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 84px; }
