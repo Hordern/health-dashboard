@@ -53,7 +53,8 @@ database writes. Each source's last result shows at the top of the dashboard.
 6. JEFIT: create a **read-only** token at jefit.com → Settings → Access tokens
    (needs Elite) and set `JEFIT_TOKEN` on the daily service.
 7. Withings: create an app at developer.withings.com with callback
-   `https://<domain>/withings/callback`, then visit `https://<domain>/withings/connect`.
+   `https://<domain>/withings/callback`, then visit `https://<domain>/withings/connect`
+   (it only works while Withings is not yet connected).
 
 ## Day-to-day
 
