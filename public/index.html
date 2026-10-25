@@ -96,7 +96,11 @@
           <div class="chart"><canvas id="readinessChart"></canvas></div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="label" style="--c: var(--weight)">Weight</span><span class="when">120 days</span></div>
+          <div class="card-head"><span class="label" style="--c: var(--weight)">Weight</span>
+            <div class="segmented" id="weightRange">
+              <button data-days="90">3M</button><button data-days="365" class="on">1Y</button><button data-days="0">All</button>
+            </div>
+          </div>
           <div class="chart"><canvas id="weightChart"></canvas></div>
         </div>
         <div class="card">

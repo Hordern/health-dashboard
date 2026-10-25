@@ -55,8 +55,10 @@ export async function syncWithings({ days = 30 } = {}) {
   return `${count} weigh-ins from the last ${days} days`;
 }
 
+// Collects every weigh-in first, then saves them in one statement. Inserting row
+// by row took minutes for a full history (~1,000 rows) and stalled part-way.
 async function saveWeighIns(wc, from) {
-  let count = 0;
+  const byTime = new Map(); // keyed by timestamp: one upsert can't touch the same row twice
   for await (const group of wc.measures.paginate({
     types: [MeasureType.Weight, MeasureType.FatRatio, MeasureType.MuscleMass],
     category: 1, // real measurements, not goals
@@ -64,14 +66,23 @@ async function saveWeighIns(wc, from) {
   })) {
     const weight = measureValue(group, MeasureType.Weight);
     if (weight == null) continue; // e.g. a body-composition-only group
-    await query(
-      `insert into weights (measured_at, weight_kg, fat_ratio, muscle_kg, raw)
-       values (to_timestamp($1), $2, $3, $4, $5)
-       on conflict (measured_at) do update set weight_kg = excluded.weight_kg,
-         fat_ratio = excluded.fat_ratio, muscle_kg = excluded.muscle_kg, raw = excluded.raw`,
-      [group.date, weight, measureValue(group, MeasureType.FatRatio) ?? null, measureValue(group, MeasureType.MuscleMass) ?? null, group],
-    );
-    count++;
+    byTime.set(group.date, {
+      epoch: group.date,
+      weight_kg: weight,
+      fat_ratio: measureValue(group, MeasureType.FatRatio) ?? null,
+      muscle_kg: measureValue(group, MeasureType.MuscleMass) ?? null,
+      raw: group,
+    });
   }
-  return count;
+  if (byTime.size === 0) return 0;
+
+  await query(
+    `insert into weights (measured_at, weight_kg, fat_ratio, muscle_kg, raw)
+     select to_timestamp(epoch), weight_kg, fat_ratio, muscle_kg, raw
+     from jsonb_to_recordset($1::jsonb) as r(epoch bigint, weight_kg numeric, fat_ratio numeric, muscle_kg numeric, raw jsonb)
+     on conflict (measured_at) do update set weight_kg = excluded.weight_kg,
+       fat_ratio = excluded.fat_ratio, muscle_kg = excluded.muscle_kg, raw = excluded.raw`,
+    [JSON.stringify([...byTime.values()])],
+  );
+  return byTime.size;
 }

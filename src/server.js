@@ -65,7 +65,8 @@ app.get("/api/dashboard", async (_req, res, next) => {
       query(`select p.*, (select sum(distance_km) from activities a where a.date = p.date and a.type = 'running') as actual_km
              from plan_days p order by date`),
       query(`select * from health_daily where date > current_date - 14 order by date`),
-      query(`select measured_at, weight_kg, fat_ratio, muscle_kg from weights where measured_at > now() - interval '120 days' order by measured_at`),
+      // Full history (about a reading a day, so ~1,000 rows); the page picks the range to show.
+      query(`select measured_at, weight_kg, fat_ratio, muscle_kg from weights order by measured_at`),
       query(`select date, distance_km, avg_hr from activities where type = 'running' and date >= (select min(start_date) from plan_weeks) order by start_local`),
       query(`select date, start_local, type, name, distance_km, duration_s, avg_hr, max_hr, training_effect_label
              from activities where date > current_date - 10 order by start_local desc`),

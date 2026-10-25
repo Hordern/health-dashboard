@@ -138,7 +138,7 @@ function renderHealth({ health, weights }) {
     </div>`,
     metricCard({
       title: "Weight", icon: "scale", color: "--weight", date: w?.measured_at,
-      value: w?.weight_kg?.toFixed(1), unit: "kg", viz: sparkline(weights.map((x) => x.weight_kg), "--weight"),
+      value: w?.weight_kg?.toFixed(1), unit: "kg", viz: sparkline(weights.filter((x) => new Date(x.measured_at) > Date.now() - 90 * 86_400_000).map((x) => x.weight_kg), "--weight"),
       caption: weekAgo ? `${w.weight_kg - weekAgo.weight_kg >= 0 ? "+" : "−"}${Math.abs(w.weight_kg - weekAgo.weight_kg).toFixed(1)} kg vs a week earlier` : w ? "Withings scales" : "Waiting for the first Withings weigh-in",
     }),
     metricCard({
@@ -324,9 +324,7 @@ function renderCharts({ weeks, days, health, weights, runs }) {
     { label: "Readiness", data: health.map((h) => h.readiness_score), borderColor: css("--ready") },
     { label: "Acute load", data: health.map((h) => h.acute_load), borderColor: css("--load"), borderDash: [4, 4], yAxisID: "y1" },
   ], axes({ y: { min: 0, max: 100 }, y1: {} }), "Waiting for the first Garmin sync");
-  line("weightChart", weights.map((w) => fmtShort(w.measured_at)), [
-    { label: "Weight (kg)", data: weights.map((w) => w.weight_kg), borderColor: css("--weight") },
-  ], undefined, "Waiting for the first Withings weigh-in");
+  renderWeightChart(weights);
   line("hrTrendChart", runs.map((r) => fmtShort(r.date)), [
     { label: "Avg HR", data: runs.map((r) => r.avg_hr), borderColor: css("--heart"), pointRadius: 3 },
     { label: "Easy guide", data: runs.map(() => HR_GUIDE), borderColor: css("--ok"), borderDash: [3, 4], borderWidth: 1.5, reference: true },
@@ -356,6 +354,28 @@ function renderCharts({ weeks, days, health, weights, runs }) {
     data: { labels: nights.map((h) => fmtShort(h.date)), datasets: sleepSets },
     options: { scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, border: { display: false }, title: { display: true, text: "hours" } } } },
   });
+}
+
+// Weight chart with a 3M / 1Y / All switch. Longer ranges label by month and year.
+let weightChart;
+function renderWeightChart(weights) {
+  if (noData("weightChart", [{ data: weights.map((w) => w.weight_kg) }], "Waiting for the first Withings weigh-in")) return;
+  const draw = (days) => {
+    const since = days ? Date.now() - days * 86_400_000 : 0;
+    const shown = weights.filter((w) => new Date(w.measured_at) >= since);
+    const fmt = days && days <= 120 ? fmtShort : (d) => asDate(d).toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+    weightChart?.destroy();
+    weightChart = new Chart($("weightChart"), {
+      type: "line",
+      data: { labels: shown.map((w) => fmt(w.measured_at)), datasets: [{ label: "Weight (kg)", data: shown.map((w) => w.weight_kg), borderColor: css("--weight"), backgroundColor: "transparent", borderWidth: 1.8 }] },
+      options: { scales: axes(), plugins: { legend: { display: false } } },
+    });
+  };
+  const buttons = [...document.querySelectorAll("#weightRange button")];
+  for (const b of buttons) {
+    b.onclick = () => { buttons.forEach((x) => x.classList.toggle("on", x === b)); draw(Number(b.dataset.days)); };
+  }
+  draw(365);
 }
 
 // ---------- Status, alerts, navigation ----------
