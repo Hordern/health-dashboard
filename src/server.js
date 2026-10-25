@@ -95,6 +95,8 @@ app.get("/withings/connect", async (_req, res, next) => {
 
 app.get("/withings/callback", async (req, res, next) => {
   try {
+    // Withings' "Test URL reachability" button calls this with no code; answer 200 so the test passes.
+    if (!req.query.code) return res.send("Withings callback is reachable.");
     if (req.query.state !== (await getSetting("withings_oauth_state"))) return res.status(400).send("State mismatch — start again at /withings/connect");
     await completeAuthorization(String(req.query.code));
     res.send('Withings connected. Weights will appear after the next daily sync. <a href="/">Back to dashboard</a>');
