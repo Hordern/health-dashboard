@@ -57,6 +57,20 @@ database writes. Each source's last result shows at the top of the dashboard.
    `https://<domain>/withings/callback`, then visit `https://<domain>/withings/connect`
    (it only works while Withings is not yet connected).
 
+## Ask Claude about the data (claude.ai connector)
+
+The web service also runs a read-only MCP server at `/mcp/<MCP_KEY>`
+(`src/mcp.js`). Tools cover daily health, activities, gym sessions and plan,
+weights, the running plan, coaching notes, a block review for any date range,
+the athlete profile/coaching rules, and a `sql_query` tool. SQL runs as the
+`dashboard_reader` login (`db/readonly.sql`): SELECT on data tables only, no
+access to `settings` (tokens), read-only transactions, one statement, 5 s cap.
+
+Setup: set `MCP_KEY` and `READONLY_DB_PASSWORD` on the web service, run
+`npm run migrate` (creates the role), then in claude.ai → Settings → Connectors
+→ Add custom connector, use `https://<domain>/mcp/<MCP_KEY>`. The key is the
+only access control, so keep the URL private.
+
 ## Day-to-day
 
 - **Plan changes:** edit CURRENT_PLAN.md as now, then `npm run import-plan`.
