@@ -50,12 +50,13 @@ export async function syncJefit({ days = 14 } = {}) {
 
   const end = new Date();
   const start = new Date(end - days * 86_400_000);
-  // The guide doesn't give the date format for startDate/endDate; YYYY-MM-DD is
-  // unconfirmed until the first real call (a 400 here names the bad param).
+  // startDate/endDate are epoch seconds. Any other format (YYYY-MM-DD, ms) is
+  // silently ignored and returns an empty list rather than an error.
+  const epoch = (d) => Math.floor(d.getTime() / 1000);
   const [names, dayNameById, sessions] = await Promise.all([
     exerciseNames(),
     dayNames(),
-    get(`/user/sessions?startDate=${ymd(start)}&endDate=${ymd(end)}`),
+    get(`/user/sessions?startDate=${epoch(start)}&endDate=${epoch(end)}`),
   ]);
 
   for (const s of sessions) {
