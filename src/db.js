@@ -34,6 +34,10 @@ export async function setSetting(key, value) {
   );
 }
 
+export async function clearSetting(key) {
+  await query("delete from settings where key = $1", [key]);
+}
+
 // Records one sync attempt for a source; the dashboard shows the latest per source.
 export async function recordSync(source, fn) {
   const [{ id }] = await query("insert into sync_runs (source) values ($1) returning id", [source]);

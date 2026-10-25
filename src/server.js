@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import express from "express";
 import { getSetting, query, setSetting } from "./db.js";
 import { authorizeUrl, completeAuthorization } from "./sources/withings.js";
+import { SIGN_IN_FLAG } from "./sources/garmin.js";
 
 const app = express();
 
@@ -16,6 +17,25 @@ app.use((req, res, next) => {
 });
 
 app.get("/robots.txt", (_req, res) => res.type("text/plain").send("User-agent: *\nDisallow: /\n"));
+
+// Problems that need Daniel to do something, shown as a banner at the top of the page.
+const GARMIN_LOGIN_CMD =
+  "cd ~/Projects/health-dashboard && railway run --service Postgres sh -c 'DATABASE_URL=$DATABASE_PUBLIC_URL npm run garmin:login'";
+
+async function alerts() {
+  const [garminTokens, signInRequired] = await Promise.all([getSetting("garmin_tokens"), getSetting(SIGN_IN_FLAG)]);
+  const list = [];
+  if (!garminTokens) {
+    list.push({ title: "Garmin isn't connected", detail: "Sign in once from your Mac:", command: GARMIN_LOGIN_CMD });
+  } else if (signInRequired) {
+    list.push({
+      title: "Garmin needs a fresh sign-in",
+      detail: `Garmin rejected the saved session on ${new Date(signInRequired.since).toLocaleDateString("en-AU")}, so no new Garmin data is coming in. Run this in Terminal:`,
+      command: GARMIN_LOGIN_CMD,
+    });
+  }
+  return list;
+}
 
 app.get("/api/dashboard", async (_req, res, next) => {
   try {
@@ -32,7 +52,7 @@ app.get("/api/dashboard", async (_req, res, next) => {
       query(`select date, model, body from coaching_notes order by date desc limit 1`),
       query(`select distinct on (source) source, started_at, ok, message from sync_runs order by source, started_at desc`),
     ]);
-    res.json({ weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs });
+    res.json({ alerts: await alerts(), weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs });
   } catch (err) {
     next(err);
   }

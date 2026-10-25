@@ -5,9 +5,13 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { getSetting, query, setSetting } from "../db.js";
+import { clearSetting, getSetting, query, setSetting } from "../db.js";
 
 const TOKEN_KEY = "garmin_tokens";
+// Set when Garmin rejects the saved session; the dashboard shows a banner while it exists.
+export const SIGN_IN_FLAG = "garmin_sign_in_required";
+// Exit code garmin_fetch.py uses for a rejected session. Must match the Python side.
+const SIGN_IN_REQUIRED = 3;
 const SCRIPT = fileURLToPath(new URL("./garmin_fetch.py", import.meta.url));
 
 // Railway's image sets PYTHON. On a laptop, use the project's .venv (created
@@ -23,7 +27,12 @@ export function runGarminScript(mode, input, { interactive = false, args = [] } 
     let out = "";
     child.stdout.on("data", (chunk) => (out += chunk));
     child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(`garmin_fetch.py ${mode} exited with ${code}`))));
+    child.on("close", (code) => {
+      if (code === 0) return resolve(out);
+      const err = new Error(`garmin_fetch.py ${mode} exited with ${code}`);
+      err.exitCode = code;
+      reject(err);
+    });
     if (!interactive) child.stdin.end(JSON.stringify(input));
   });
 }
@@ -85,8 +94,20 @@ export async function syncGarmin({ days = 3 } = {}) {
   const tokens = await getSetting(TOKEN_KEY);
   if (!tokens) throw new Error("Garmin not connected yet — run `npm run garmin:login` locally");
 
-  const result = JSON.parse(await runGarminScript("fetch", { tokens, start: isoDaysAgo(days - 1), end: isoDaysAgo(0) }));
+  let output;
+  try {
+    output = await runGarminScript("fetch", { tokens, start: isoDaysAgo(days - 1), end: isoDaysAgo(0) });
+  } catch (err) {
+    // Flag a dead session so the dashboard shows a sign-in banner (see server.js).
+    if (err.exitCode === SIGN_IN_REQUIRED) {
+      await setSetting(SIGN_IN_FLAG, { since: new Date().toISOString() });
+      throw new Error("Garmin session expired — sign in again with `npm run garmin:login`");
+    }
+    throw err;
+  }
+  const result = JSON.parse(output);
   await setSetting(TOKEN_KEY, result.tokens);
+  await clearSetting(SIGN_IN_FLAG); // the session works, so drop any old banner
 
   for (const a of result.activities) await upsert("activities", "id", activityRow(a), a);
   for (const d of result.days) await upsert("health_daily", "date", healthRow(d), d);

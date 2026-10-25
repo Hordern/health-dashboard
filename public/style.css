@@ -40,3 +40,7 @@ tr:last-child td { border-bottom: none; }
 .week-title { font-size: 14px; font-weight: 600; text-align: center; }
 .week-total { font-size: 12px; color: #777; text-align: center; margin-top: 2px; }
 .sync-bad { color: #b3261e; }
+.alert { background: #fdecc8; border: 1px solid #f0c36d; color: #5c3a00; border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; }
+.alert-title { font-weight: 600; margin-bottom: 4px; }
+.alert-cmd { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.alert-cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; background: #fff8e6; padding: 6px 8px; border-radius: 6px; font-size: 12px; }

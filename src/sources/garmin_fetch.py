@@ -18,7 +18,11 @@ import json
 import sys
 from datetime import date, timedelta
 
-from garminconnect import Garmin
+from garminconnect import Garmin, GarminConnectAuthenticationError
+
+# Exit code meaning "the saved session is dead; Daniel must sign in again".
+# Must match SIGN_IN_REQUIRED in garmin.js.
+SIGN_IN_REQUIRED = 3
 
 
 def prompt(label):
@@ -55,7 +59,13 @@ def safe(fn, *args):
 def fetch():
     req = json.load(sys.stdin)
     garmin = Garmin()
-    garmin.login(tokenstore=req["tokens"])
+    try:
+        garmin.login(tokenstore=req["tokens"])
+    except GarminConnectAuthenticationError as e:
+        # The saved session can't be refreshed (expired or revoked). Only a new
+        # sign-in from the laptop fixes this, so tell Node with a distinct exit code.
+        sys.stderr.write(f"Garmin session rejected: {e}\n")
+        sys.exit(SIGN_IN_REQUIRED)
 
     start, end = date.fromisoformat(req["start"]), date.fromisoformat(req["end"])
     days = []

@@ -5,8 +5,8 @@
 // If Garmin rate-limits the login (429), reuse this Mac's existing session instead:
 //   npm run garmin:login -- --import [path, default ~/.garminconnect]
 
-import { pool, setSetting } from "../src/db.js";
-import { runGarminScript } from "../src/sources/garmin.js";
+import { clearSetting, pool, setSetting } from "../src/db.js";
+import { runGarminScript, SIGN_IN_FLAG } from "../src/sources/garmin.js";
 
 const importIdx = process.argv.indexOf("--import");
 const tokens = (importIdx === -1
@@ -14,5 +14,6 @@ const tokens = (importIdx === -1
   : await runGarminScript("import", null, { interactive: true, args: process.argv.slice(importIdx + 1, importIdx + 2) })
 ).trim();
 await setSetting("garmin_tokens", tokens);
+await clearSetting(SIGN_IN_FLAG); // fresh session, so remove the dashboard's sign-in banner
 console.log("Garmin tokens saved.");
 await pool.end();

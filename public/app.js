@@ -28,6 +28,17 @@ function renderSyncStatus(syncs) {
   }).join(" · ");
 }
 
+// Banner for anything Daniel has to fix himself, e.g. an expired Garmin session.
+function renderAlerts(alerts) {
+  document.getElementById("alerts").innerHTML = alerts.map((a, i) => `
+    <div class="alert">
+      <div class="alert-title">⚠️ ${esc(a.title)}</div>
+      <div>${esc(a.detail)}</div>
+      ${a.command ? `<div class="alert-cmd"><code id="cmd${i}">${esc(a.command)}</code>
+        <button class="btn-light" onclick="navigator.clipboard.writeText(document.getElementById('cmd${i}').textContent); this.textContent='Copied'">Copy</button></div>` : ""}
+    </div>`).join("");
+}
+
 function renderCards({ health, weights }) {
   const last = (key) => [...health].reverse().find((h) => h[key] != null);
   const w = weights.at(-1);
@@ -143,6 +154,7 @@ async function main() {
   if (!res.ok) throw new Error(`API returned ${res.status}`);
   const data = await res.json();
   document.getElementById("syncStatus").innerHTML = renderSyncStatus(data.syncs);
+  renderAlerts(data.alerts);
   renderCards(data);
   renderNote(data.note);
   renderRecoveryCharts(data.health);
