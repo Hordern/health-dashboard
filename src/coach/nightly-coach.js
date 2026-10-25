@@ -12,6 +12,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import * as z from "zod";
 import { getSetting, query } from "../db.js";
 import { activeBlock, recentChanges, updatePlanDay } from "../plan/store.js";
+import { blockStatus } from "../plan/status.js";
 
 const MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-5-5";
 const AUTHOR = "nightly-coach";
@@ -36,6 +37,8 @@ async function context(day) {
   const since = "current_date - 42";
   return {
     active_block: await activeBlock(),
+    // on_track / at_risk / stalled / ended, with runs done per block week.
+    block_status: await blockStatus(await activeBlock(), day),
     plan_this_week_and_next: await query(`select date::text, gym, run_type, planned_km, hr_guide, shoe, status, notes from plan_days where date between current_date - 7 and current_date + 14 order by date`),
     // Past run days nobody has reviewed yet. Days someone already commented on are left alone.
     reviewable_days: await query(`select date::text, run_type, planned_km from plan_days where date < $1 and date >= current_date - 7 and planned_km > 0 and status = 'upcoming' order by date`, [day]),
@@ -64,7 +67,7 @@ export async function runNightlyCoach() {
     system: [
       { type: "text", text: instructions },
       { type: "text", text: `# Athlete profile\n\n${profile ?? "(not imported)"}`, cache_control: { type: "ephemeral" } },
-      { type: "text", text: "The running plan now lives in the dashboard database, not CURRENT_PLAN.md. You review runs and adjust upcoming distances through your structured output; Daniel and other agents can also edit the plan, and recent_plan_changes shows what they changed and why. Respect the active block's rules." },
+      { type: "text", text: "The running plan now lives in the dashboard database, not CURRENT_PLAN.md. You review runs and adjust upcoming distances through your structured output; Daniel and other agents can also edit the plan, and recent_plan_changes shows what they changed and why. Respect the active block's rules. If block_status says a new plan is due (stalled or ended), say so in the note and tell Daniel to press 'Plan next block' on the dashboard; don't redesign the block yourself." },
     ],
     messages: [{
       role: "user",

@@ -135,3 +135,15 @@ create table if not exists sync_runs (
   ok          boolean,
   message     text
 );
+
+-- Planning chats: Daniel and the coach agree the next block. messages are the
+-- raw Claude API messages (kept exactly, so thinking blocks replay correctly);
+-- proposal is the latest block the coach proposed; locking it in creates the block.
+create table if not exists coach_chats (
+  id         serial primary key,
+  created_at timestamptz not null default now(),
+  status     text not null default 'open', -- open | locked | closed
+  messages   jsonb not null default '[]',
+  proposal   jsonb,
+  block_name text
+);

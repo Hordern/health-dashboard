@@ -113,6 +113,7 @@
           <span class="when" id="runPlanWhen">day by day, with coach's comments <span class="chev">›</span></span>
         </summary>
         <div class="collapsible-body">
+          <button class="btn" data-action="planNextBlock" style="margin: 0 0 12px">Plan next block with the coach</button>
           <div id="blockInfo"></div>
           <div class="week-nav">
             <button class="icon-btn" id="prevWeek" aria-label="Previous week">‹</button>
@@ -124,6 +125,26 @@
           <details class="changes"><summary id="changesSummary">Plan change log</summary><div id="planChanges"></div></details>
         </div>
       </details>
+
+      <!-- Planning chat: opened by "Plan next block". Talk the next block through
+           with the coach, then lock in its proposal. Needs the coach PIN. -->
+      <div class="card planner" id="planner" hidden>
+        <div class="card-head">
+          <span class="label" style="--c: var(--coach)">Plan next block</span>
+          <span><button class="icon-btn" id="plannerRestart" title="Start over" aria-label="Start over">↺</button>
+            <button class="icon-btn" id="plannerClose" title="Close" aria-label="Close">×</button></span>
+        </div>
+        <form id="pinForm" class="chat-form" hidden>
+          <input id="pinInput" type="password" inputmode="numeric" placeholder="Coach PIN" autocomplete="off">
+          <button class="btn" type="submit">Continue</button>
+        </form>
+        <div id="chatLog" class="chat-log"></div>
+        <div id="proposal"></div>
+        <form id="chatForm" class="chat-form" hidden>
+          <textarea id="chatInput" rows="2" placeholder="Reply to the coach…"></textarea>
+          <button class="btn" type="submit">Send</button>
+        </form>
+      </div>
 
       <details class="card collapsible">
         <summary class="card-head">

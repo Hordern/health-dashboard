@@ -4,6 +4,7 @@
 
 import { query } from "./db.js";
 import { activeBlock } from "./plan/store.js";
+import { blockStatus } from "./plan/status.js";
 
 const HR_GUIDE = 148; // easy-run guide from CURRENT_PLAN.md (long runs use 150)
 
@@ -96,5 +97,6 @@ async function currentBlock(block, today) {
     total_days: Math.floor((Date.parse(block.end) - Date.parse(block.start)) / 86_400_000) + 1,
     runs_in_block: Number(runs), // the whole block, including runs still to come
     success: block.success,
+    status: await blockStatus(block, today), // on track / at risk / stalled / ended, week by week
   };
 }

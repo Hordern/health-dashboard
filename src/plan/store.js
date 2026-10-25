@@ -99,6 +99,10 @@ export async function createBlock(spec, meta) {
   requireMeta(meta);
   const { name, start, summary = null, rules = [], success = null, hr_guide = null, shoe = null, gym_by_weekday = {}, weeks } = spec;
   if (!name || !start || !weeks?.length) throw new Error("name, start and at least one week are required");
+  // A block replaces the plan from its start date, so starting in the past would
+  // erase days that already happened.
+  const todayMelbourne = new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ ?? "Australia/Melbourne" });
+  if (start < todayMelbourne) throw new Error(`start (${start}) can't be in the past; it would overwrite history`);
 
   return transaction(async (client) => {
     const end = addDays(start, weeks.length * 7 - 1);

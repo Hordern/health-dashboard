@@ -144,6 +144,32 @@ section:first-of-type h2 { margin-top: 0; }
 details.changes { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 details.changes > summary { font-weight: 600; }
 
+/* Block weeks strip in the block review. */
+.block-weeks { display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px; margin: 8px 0; }
+.bw { text-align: center; font-size: 12px; padding: 6px 4px; border-radius: 10px; background: var(--track); color: var(--muted); }
+.bw b { display: block; color: var(--text); font-size: 13px; }
+.bw.complete { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.bw.stalled { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+
+/* Planning chat. */
+.planner { border: 1px solid color-mix(in srgb, var(--coach) 30%, transparent); }
+.chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 460px; overflow-y: auto; padding: 4px 2px; }
+.bubble { max-width: 85%; padding: 10px 14px; border-radius: 16px; font-size: 14px; line-height: 1.5; }
+.bubble p { margin: 4px 0; } .bubble h3 { font: 600 17px var(--serif); margin: 6px 0 2px; } .bubble ul, .bubble ol { margin: 4px 0; padding-left: 18px; }
+.bubble.assistant { background: var(--track); align-self: flex-start; border-bottom-left-radius: 4px; }
+.bubble.user { background: var(--text); color: var(--card); align-self: flex-end; border-bottom-right-radius: 4px; white-space: pre-wrap; }
+.bubble.thinking { color: var(--muted); font-style: italic; }
+.bubble.error { background: color-mix(in srgb, var(--bad) 12%, transparent); color: var(--bad); }
+.chat-form { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
+.chat-form textarea, .chat-form input { flex: 1; min-width: 0; font: 14px var(--sans); padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--text); resize: vertical; }
+.chat-form .btn { margin-top: 0; }
+.proposal { margin-top: 12px; padding: 14px; border-radius: 16px; background: color-mix(in srgb, var(--run) 8%, var(--card)); border: 1px solid color-mix(in srgb, var(--run) 30%, transparent); font-size: 14px; }
+.proposal p { color: var(--muted); margin: 6px 0; }
+.table-scroll { overflow-x: auto; }
+table.weeks { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0; }
+table.weeks th, table.weeks td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.weeks th { color: var(--muted); font-weight: 600; font-size: 12px; }
+
 /* Gym plan day pills. */
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .pill { border: none; cursor: pointer; padding: 6px 12px; border-radius: 999px; font: 600 13px var(--sans); background: var(--track); color: var(--text); text-transform: capitalize; }

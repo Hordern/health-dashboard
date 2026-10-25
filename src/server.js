@@ -6,6 +6,8 @@ import { SIGN_IN_FLAG } from "./sources/garmin.js";
 import { blockReview } from "./block.js";
 import { mountMcp } from "./mcp.js";
 import { activeBlock, recentChanges } from "./plan/store.js";
+import { blockStatus } from "./plan/status.js";
+import { latestOpenChat, lockIn, sendMessage, startChat } from "./coach/planning-chat.js";
 
 const app = express();
 
@@ -32,6 +34,13 @@ async function alerts() {
     getSetting("garmin_tokens"), getSetting(SIGN_IN_FLAG), getSetting(WITHINGS_TOKEN_KEY), getSetting(RECONNECT_FLAG),
   ]);
   const list = [];
+
+  // The active block has ended or stalled: time to plan the next one with the coach.
+  const block = await activeBlock();
+  const status = await blockStatus(block, new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ ?? "Australia/Melbourne" }));
+  if (status?.new_plan_due) {
+    list.push({ title: "Time to plan the next block", detail: status.reason, action: { id: "planNextBlock", text: "Plan next block with the coach" } });
+  }
 
   // Withings: the developer-app variables come first, then the one-click OAuth connect.
   if (!process.env.WITHINGS_CLIENT_ID) {
@@ -132,6 +141,29 @@ app.get("/withings/callback", async (req, res, next) => {
 });
 
 mountMcp(app, express); // Claude connector at /mcp/<MCP_KEY>
+
+// Planning chat. The dashboard is public, but these endpoints change the plan and
+// spend Anthropic credit, so they need COACH_PIN (sent by the page as X-Coach-Pin).
+function requirePin(req, res, next) {
+  const pin = process.env.COACH_PIN;
+  const given = req.get("x-coach-pin") ?? "";
+  const ok = pin && given.length === pin.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(pin));
+  if (ok) return next();
+  res.status(401).json({ error: pin ? "Wrong PIN" : "Planning chat is off (COACH_PIN not set)" });
+}
+const handle = (fn) => async (req, res) => {
+  try {
+    res.json(await fn(req));
+  } catch (err) {
+    console.error("planning chat", err);
+    res.status(400).json({ error: err.message });
+  }
+};
+app.use("/api/coach", express.json(), requirePin);
+app.get("/api/coach/chat", handle(() => latestOpenChat()));
+app.post("/api/coach/chat", handle(() => startChat()));
+app.post("/api/coach/chat/:id/messages", handle((req) => sendMessage(Number(req.params.id), String(req.body.text ?? "").slice(0, 4000))));
+app.post("/api/coach/chat/:id/lock", handle((req) => lockIn(Number(req.params.id))));
 
 app.use(express.static(new URL("../public", import.meta.url).pathname));
 

@@ -342,6 +342,23 @@ function tile(title, value, { of, unit = "", delta, better, dp = 0 } = {}) {
   </div>`;
 }
 
+// Block status chip + one cell per block week (runs done / planned). A finished
+// week with fewer than half its runs done is "stalled"; two in a row, or the
+// block ending, means it's time to plan the next block.
+const BLOCK_STATES = {
+  on_track: ["On track", "--ok"], at_risk: ["At risk", "--warn"],
+  stalled: ["Stalled · new plan due", "--bad"], ended: ["Ended · new plan due", "--bad"],
+};
+function blockWeeks(status) {
+  const [text, color] = BLOCK_STATES[status.state];
+  return `
+    <div class="caption"><span class="chip" style="--c: var(${color})">${text}</span> ${esc(status.reason ?? "")}</div>
+    <div class="block-weeks">${status.weeks.map((w) => `
+      <div class="bw ${w.stalled ? "stalled" : w.complete ? "complete" : ""}" title="${esc(`${w.label}: ${fmtShort(w.start)} – ${fmtShort(w.end)}`)}">
+        <b>${esc(w.label)}</b>${w.done}/${w.planned}
+      </div>`).join("")}</div>`;
+}
+
 function renderBlock(block) {
   const card = $("blockCard");
   const draw = (view) => {
@@ -372,6 +389,7 @@ function renderBlock(block) {
       ${view === "current" ? `
         <div class="caption"><strong>${esc(b.name)}</strong> · day ${Math.min(b.day, b.total_days)} of ${b.total_days} · ${b.runs_done} of ${b.runs_in_block} runs done so far</div>
         <div class="progress"><span style="width:${Math.min(100, (b.runs_done / (b.runs_in_block || 1)) * 100)}%"></span></div>
+        ${b.status ? blockWeeks(b.status) : ""}
         ${b.success ? `<div class="caption">Success measure: ${esc(b.success)}</div>` : ""}`
       : `<div class="caption">Run adherence ${pct(b.runs_done, b.runs_planned)} · ${b.runs} runs logged in total${prev ? " · ▲▼ vs the 4 weeks before" : ""}</div>`}`;
     card.querySelectorAll("#blockRange button").forEach((btn) => (btn.onclick = () => draw(btn.dataset.v)));
@@ -542,7 +560,117 @@ function renderAlerts(alerts) {
       ${a.command ? `<div class="alert-cmd"><code id="cmd${i}">${esc(a.command)}</code>
         <button class="btn" onclick="navigator.clipboard.writeText(document.getElementById('cmd${i}').textContent); this.textContent='Copied'">Copy</button></div>` : ""}
       ${a.link ? `<a class="btn" href="${esc(a.link.href)}">${esc(a.link.text)}</a>` : ""}
+      ${a.action ? `<button class="btn" data-action="${esc(a.action.id)}">${esc(a.action.text)}</button>` : ""}
     </div>`).join("");
+}
+
+// ---------- Planning chat ----------
+// The PIN is remembered in this browser only; the server checks it on every call.
+
+const storage = {
+  get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
+  remove: (k) => { try { localStorage.removeItem(k); } catch {} },
+};
+
+async function coachApi(path, method = "GET", body) {
+  const res = await fetch(`/api/coach${path}`, {
+    method,
+    headers: { "Content-Type": "application/json", "X-Coach-Pin": storage.get("coachPin") ?? "" },
+    body: body && JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { storage.remove("coachPin"); showPin(data.error); throw new Error(data.error); }
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data;
+}
+
+let chatId = null;
+
+function showPin(message) {
+  $("pinForm").hidden = false;
+  $("chatForm").hidden = true;
+  $("chatLog").innerHTML = `<div class="empty">${esc(message ?? "Enter the coach PIN to plan with the coach.")}</div>`;
+}
+
+function renderChat(chat) {
+  chatId = chat.id;
+  $("pinForm").hidden = true;
+  $("chatForm").hidden = false;
+  $("chatLog").innerHTML = chat.turns.map((t) => `<div class="bubble ${t.role}">${t.role === "assistant" ? markdown(t.text) : esc(t.text)}</div>`).join("");
+  renderProposal(chat.proposal);
+  $("chatLog").scrollTop = $("chatLog").scrollHeight;
+}
+
+function renderProposal(p) {
+  if (!p) return ($("proposal").innerHTML = "");
+  const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const used = days.filter((d) => p.weeks.some((w) => w.runs[d]));
+  const end = new Date(Date.parse(p.start) + (p.weeks.length * 7 - 1) * 86_400_000).toISOString().slice(0, 10);
+  $("proposal").innerHTML = `
+    <div class="proposal">
+      <div class="row-title">${esc(p.name)} · ${fmtShort(p.start)} – ${fmtShort(end)} · ${p.weeks.length} weeks</div>
+      <p>${esc(p.summary)}</p>
+      <div class="table-scroll"><table class="weeks">
+        <tr><th>Week</th>${used.map((d) => `<th>${d}</th>`).join("")}<th>Total</th><th>Objective</th></tr>
+        ${p.weeks.map((w) => `<tr><td>${esc(w.label)}</td>${used.map((d) => `<td>${w.runs[d] ?? ""}</td>`).join("")}
+          <td><b>${Object.values(w.runs).reduce((a, b) => a + b, 0).toFixed(1)}</b></td><td>${esc(w.objective)}</td></tr>`).join("")}
+      </table></div>
+      <details><summary>Rules (${p.rules.length}) · success measure</summary><ul>${p.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul><p><strong>Success:</strong> ${esc(p.success)}</p></details>
+      <button class="btn" id="lockIn">Lock in this block</button>
+    </div>`;
+  $("lockIn").onclick = async () => {
+    if (!confirm(`Lock in "${p.name}"? It replaces the plan from ${fmtShort(p.start)}.`)) return;
+    try {
+      await coachApi(`/chat/${chatId}/lock`, "POST");
+      location.reload();
+    } catch (err) { alert(err.message); }
+  };
+}
+
+async function withThinking(fn) {
+  $("chatLog").insertAdjacentHTML("beforeend", '<div class="bubble assistant thinking">Coach is thinking…</div>');
+  $("chatLog").scrollTop = $("chatLog").scrollHeight;
+  try {
+    renderChat(await fn());
+  } catch (err) {
+    document.querySelector(".thinking")?.remove();
+    $("chatLog").insertAdjacentHTML("beforeend", `<div class="bubble error">${esc(err.message)}</div>`);
+  }
+}
+
+async function openPlanner() {
+  $("planner").hidden = false;
+  $("planner").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!storage.get("coachPin")) return showPin();
+  $("pinForm").hidden = true;
+  try {
+    const open = await coachApi("/chat");
+    if (open) return renderChat(open);
+  } catch { return; }
+  $("chatLog").innerHTML = "";
+  withThinking(() => coachApi("/chat", "POST")); // the coach reviews the history and opens with a proposal
+}
+
+function setupPlanner() {
+  document.addEventListener("click", (e) => { if (e.target.closest('[data-action="planNextBlock"]')) openPlanner(); });
+  $("plannerClose").onclick = () => ($("planner").hidden = true);
+  $("plannerRestart").onclick = () => {
+    if (!confirm("Start a new planning chat? The current one will be closed.")) return;
+    $("chatLog").innerHTML = "";
+    $("proposal").innerHTML = "";
+    withThinking(() => coachApi("/chat", "POST"));
+  };
+  $("pinForm").onsubmit = (e) => { e.preventDefault(); storage.set("coachPin", $("pinInput").value.trim()); openPlanner(); };
+  $("chatForm").onsubmit = (e) => {
+    e.preventDefault();
+    const text = $("chatInput").value.trim();
+    if (!text || !chatId) return;
+    $("chatInput").value = "";
+    $("chatLog").insertAdjacentHTML("beforeend", `<div class="bubble user">${esc(text)}</div>`);
+    withThinking(() => coachApi(`/chat/${chatId}/messages`, "POST", { text }));
+  };
+  $("chatInput").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("chatForm").requestSubmit(); } };
 }
 
 // Highlight the sidebar link for the section currently on screen.
@@ -558,6 +686,7 @@ function trackSections() {
 
 async function main() {
   trackSections();
+  setupPlanner();
   const res = await fetch("/api/dashboard");
   if (!res.ok) throw new Error(`API returned ${res.status}`);
   const data = await res.json();
