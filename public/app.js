@@ -220,27 +220,56 @@ function renderWeek({ weeks, days }) {
     : '<div class="empty">No run planned yet.</div>'}`;
 }
 
-function renderPlan({ weeks, days }) {
+// Coach → Running plan: the current block's rules, then week by week with the
+// coach's comment under each run. Opens on the week containing today.
+function renderPlan({ weeks, days, runningBlock }) {
   if (!weeks.length) return ($("planList").innerHTML = '<div class="empty">No plan imported yet.</div>');
-  let i = weeks.findIndex((w) => todayIso() >= w.start_date && todayIso() <= w.end_date);
+  const today = todayIso();
+  const b = runningBlock;
+  if (b) {
+    const day = Math.floor((asDate(today) - asDate(b.start)) / 86_400_000) + 1;
+    const total = Math.floor((asDate(b.end) - asDate(b.start)) / 86_400_000) + 1;
+    const next = days.find((d) => d.date >= today && d.planned_km && d.status === "upcoming");
+    $("runPlanWhen").innerHTML = `${esc(b.name)} · day ${Math.min(day, total)} of ${total}${next ? ` · next ${asDate(next.date).toLocaleDateString(undefined, { weekday: "short" })} ${next.planned_km} km` : ""} <span class="chev">›</span>`;
+    $("blockInfo").innerHTML = `
+      <div class="block-info">
+        <div class="row-title">${esc(b.name)} · ${fmtShort(b.start)} – ${fmtShort(b.end)}</div>
+        ${b.summary ? `<p>${esc(b.summary)}</p>` : ""}
+        ${b.success ? `<p><strong>Success measure:</strong> ${esc(b.success)}</p>` : ""}
+        ${b.rules?.length ? `<details><summary>Block rules (${b.rules.length})</summary><ul>${b.rules.map((r) => `<li>${esc(r)}</li>`).join("")}</ul></details>` : ""}
+      </div>`;
+  }
+
+  let i = weeks.findIndex((w) => today >= w.start_date && today <= w.end_date);
   if (i === -1) i = weeks.length - 1;
+  const statusColor = { done: "--ok", flag: "--warn", missed: "--bad" };
 
   const show = () => {
     const w = weeks[i];
-    $("weekTitle").textContent = `${w.label} · ${fmtShort(w.start_date)} – ${fmtShort(w.end_date)}`;
+    $("weekTitle").textContent = `${w.block && w.block !== "Comeback" ? `${w.block} · ` : ""}${w.label} · ${fmtShort(w.start_date)} – ${fmtShort(w.end_date)}`;
+    $("weekSummary").textContent = [w.planned_total_km != null ? `${w.planned_total_km} km planned` : "", w.summary ?? ""].filter(Boolean).join(" · ");
     $("prevWeek").disabled = i === 0;
     $("nextWeek").disabled = i === weeks.length - 1;
-    $("planList").innerHTML = days.filter((d) => d.week_start === w.start_date).map((d) => `
-      <div class="row">
+    $("planList").innerHTML = days.filter((d) => d.week_start === w.start_date).map((d) => {
+      const isRun = d.planned_km || d.actual_km;
+      // On run days the coach's comment is the point, so it's shown in full;
+      // on other days it sits behind a toggle.
+      const comment = !d.notes ? "" : isRun
+        ? `<div class="comment">${esc(d.notes)}</div>`
+        : `<details><summary>Coach's note</summary><p>${esc(d.notes)}</p></details>`;
+      return `
+      <div class="row${d.date === today ? " row-today" : ""}">
         <div class="row-date"><b>${asDate(d.date).toLocaleDateString(undefined, { weekday: "short" })}</b>${fmtShort(d.date)}</div>
         <div class="row-main">
-          <div class="row-title">${esc(d.run_type ?? "Rest from running")} ${d.planned_km || d.actual_km ? `<span class="chip" style="--c: var(${{ done: "--ok", flag: "--warn", missed: "--bad" }[d.status] ?? "--muted"})">${d.status}</span>` : ""}</div>
-          <div class="row-detail">${esc(d.gym ?? "")}</div>
-          ${d.notes ? `<details><summary>Notes</summary><p>${esc(d.notes)}</p></details>` : ""}
+          <div class="row-title">${esc(isRun ? `${d.run_type ?? "Run"}${d.planned_km ? ` ${d.planned_km} km` : ""}` : "No run")}
+            ${isRun ? `<span class="chip" style="--c: var(${statusColor[d.status] ?? "--muted"})">${d.status}</span>` : ""}</div>
+          <div class="row-detail">${esc([d.gym && `Gym: ${d.gym}`, isRun && d.hr_guide, isRun && d.shoe].filter(Boolean).join(" · "))}</div>
+          ${comment}
         </div>
-        <div class="row-side">${d.actual_km != null ? `${d.actual_km} km` : d.planned_km != null ? `${d.planned_km} km` : ""}
-          <div class="muted">${d.actual_km != null ? "actual" : d.planned_km != null ? "planned" : ""}</div></div>
-      </div>`).join("");
+        <div class="row-side">${d.actual_km != null ? `${d.actual_km} km` : ""}
+          <div class="muted">${d.actual_hr ? `<span class="${d.actual_hr > HR_GUIDE ? "hot" : ""}">${d.actual_hr} bpm</span>` : d.actual_km != null ? "actual" : ""}</div></div>
+      </div>`;
+    }).join("");
   };
   $("prevWeek").onclick = () => { i--; show(); };
   $("nextWeek").onclick = () => { i++; show(); };
@@ -295,13 +324,14 @@ function tile(title, value, { of, unit = "", delta, better, dp = 0 } = {}) {
 function renderBlock(block) {
   const card = $("blockCard");
   const draw = (view) => {
-    const b = view === "last4" ? block.last4 : block.sinceStart;
+    const b = { current: block.current, last4: block.last4, since: block.sinceStart }[view];
     const prev = view === "last4" ? block.prev4 : null; // deltas only make sense against an equal-length window
     const d = (key) => (prev && b[key] != null && prev[key] != null ? b[key] - prev[key] : null);
     const pct = (a, n) => (n ? `${Math.round((a / n) * 100)}%` : "—");
     card.innerHTML = `
       <div class="card-head">${label("Block review", "spark", "--run")}
         <div class="segmented" id="blockRange">
+          ${block.current ? `<button data-v="current" class="${view === "current" ? "on" : ""}">This block</button>` : ""}
           <button data-v="last4" class="${view === "last4" ? "on" : ""}">Last 4 weeks</button>
           <button data-v="since" class="${view === "since" ? "on" : ""}">Since ${fmtShort(block.sinceStart.start)}</button>
         </div>
@@ -318,10 +348,14 @@ function renderBlock(block) {
         ${tile("Sleep score", b.sleep_score, { delta: d("sleep_score"), better: "up" })}
         ${tile("Weight change", b.weight_change_kg != null ? `${b.weight_change_kg > 0 ? "+" : ""}${b.weight_change_kg}` : null, { unit: "kg" })}
       </div>
-      <div class="caption">Run adherence ${pct(b.runs_done, b.runs_planned)} · ${b.runs} runs logged in total${prev ? " · ▲▼ vs the 4 weeks before" : ""}</div>`;
+      ${view === "current" ? `
+        <div class="caption"><strong>${esc(b.name)}</strong> · day ${Math.min(b.day, b.total_days)} of ${b.total_days} · ${b.runs_done} of ${b.runs_in_block} runs done so far</div>
+        <div class="progress"><span style="width:${Math.min(100, (b.runs_done / (b.runs_in_block || 1)) * 100)}%"></span></div>
+        ${b.success ? `<div class="caption">Success measure: ${esc(b.success)}</div>` : ""}`
+      : `<div class="caption">Run adherence ${pct(b.runs_done, b.runs_planned)} · ${b.runs} runs logged in total${prev ? " · ▲▼ vs the 4 weeks before" : ""}</div>`}`;
     card.querySelectorAll("#blockRange button").forEach((btn) => (btn.onclick = () => draw(btn.dataset.v)));
   };
-  if (block?.sinceStart) draw("last4");
+  if (block?.sinceStart) draw(block.current ? "current" : "last4");
   else card.innerHTML = `${label("Block review", "spark", "--run")}<div class="empty">No plan imported yet.</div>`;
 }
 

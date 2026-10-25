@@ -2,7 +2,7 @@
 // heart rate against the easy guide, gym frequency, recovery and weight.
 // Used by the dashboard's block review and by the Claude connector.
 
-import { query } from "./db.js";
+import { getSetting, query } from "./db.js";
 
 const HR_GUIDE = 148; // easy-run guide from CURRENT_PLAN.md (long runs use 150)
 
@@ -67,15 +67,34 @@ export async function blockSummary(start, end) {
 const TZ = process.env.TZ ?? "Australia/Melbourne";
 const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toLocaleDateString("en-CA", { timeZone: TZ });
 
-// The three windows the dashboard shows: last 4 weeks, the 4 before (for
+// The windows the dashboard shows: the current training block so far (from
+// CURRENT_PLAN.md's block section), the last 4 weeks and the 4 before (for
 // comparison), and everything since the plan started.
 export async function blockReview() {
   const [{ first }] = await query(`select min(start_date)::text as first from plan_weeks`);
   const today = daysAgo(0);
-  const [last4, prev4, sinceStart] = await Promise.all([
+  const block = await getSetting("running_block");
+  const [last4, prev4, sinceStart, current] = await Promise.all([
     blockSummary(daysAgo(27), today),
     blockSummary(daysAgo(55), daysAgo(28)),
     first ? blockSummary(first, today) : null,
+    block ? currentBlock(block, today) : null,
   ]);
-  return { last4, prev4, sinceStart };
+  return { current, last4, prev4, sinceStart };
+}
+
+async function currentBlock(block, today) {
+  const end = today < block.end ? today : block.end;
+  const [{ runs }] = await query(
+    `select count(*) as runs from plan_days where planned_km > 0 and date between $1 and $2`, [block.start, block.end]);
+  return {
+    ...(await blockSummary(block.start, end)),
+    name: block.name,
+    block_start: block.start,
+    block_end: block.end,
+    day: Math.floor((Date.parse(today) - Date.parse(block.start)) / 86_400_000) + 1,
+    total_days: Math.floor((Date.parse(block.end) - Date.parse(block.start)) / 86_400_000) + 1,
+    runs_in_block: Number(runs), // the whole block, including runs still to come
+    success: block.success,
+  };
 }

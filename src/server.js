@@ -62,10 +62,12 @@ async function alerts() {
 
 app.get("/api/dashboard", async (_req, res, next) => {
   try {
-    const [weeks, days, health, weights, runs, recent, gym, note, syncs, gymPlan, lastByDay, block] = await Promise.all([
+    const [weeks, days, health, weights, runs, recent, gym, note, syncs, gymPlan, lastByDay, block, runningBlock] = await Promise.all([
       query(`select * from plan_weeks order by start_date`),
-      query(`select p.*, (select sum(distance_km) from activities a where a.date = p.date and a.type = 'running') as actual_km
-             from plan_days p order by date`),
+      query(`select p.*, w.block,
+                    (select sum(distance_km) from activities a where a.date = p.date and a.type = 'running') as actual_km,
+                    (select round(avg(avg_hr)) from activities a where a.date = p.date and a.type = 'running') as actual_hr
+             from plan_days p join plan_weeks w on w.start_date = p.week_start order by date`),
       query(`select * from health_daily where date > current_date - 14 order by date`),
       // Full history (about a reading a day, so ~1,000 rows); the page picks the range to show.
       query(`select measured_at, weight_kg, fat_ratio, muscle_kg from weights order by measured_at`),
@@ -79,10 +81,11 @@ app.get("/api/dashboard", async (_req, res, next) => {
       // When each routine day was last trained, for the gym plan's "last done".
       query(`select name, max(date)::text as last from gym_sessions where name is not null group by name`),
       blockReview(),
+      getSetting("running_block"),
     ]);
     res.json({
       alerts: await alerts(), weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs,
-      gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block,
+      gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block, runningBlock,
     });
   } catch (err) {
     next(err);

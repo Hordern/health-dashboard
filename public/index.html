@@ -59,21 +59,6 @@
           <div class="chart"><canvas id="hrTrendChart"></canvas></div>
         </div>
       </div>
-      <!-- Collapsed by default so the day-by-day plan doesn't take over the page. -->
-      <details class="card collapsible">
-        <summary class="card-head">
-          <span class="label" style="--c: var(--run)">Weekly plan</span>
-          <span class="when">day by day, with coach's notes <span class="chev">›</span></span>
-        </summary>
-        <div class="collapsible-body">
-          <div class="week-nav">
-            <button class="icon-btn" id="prevWeek" aria-label="Previous week">‹</button>
-            <span id="weekTitle"></span>
-            <button class="icon-btn" id="nextWeek" aria-label="Next week">›</button>
-          </div>
-          <div id="planList"></div>
-        </div>
-      </details>
       <div class="card">
         <div class="card-head"><span class="label" style="--c: var(--run)">Recent activity</span><span class="when">last 10 days</span></div>
         <div id="activityList"></div>
@@ -116,9 +101,38 @@
       </div>
     </section>
 
+    <!-- Everything the coach writes: the daily note, the running plan with a
+         comment on each run, and the lifting plan. All collapsed by default. -->
     <section id="coach">
       <h2>Coach</h2>
       <article class="card note" id="note"><span class="muted">No note yet.</span></article>
+
+      <details class="card collapsible" id="runPlanCard">
+        <summary class="card-head">
+          <span class="label" style="--c: var(--run)">Running plan</span>
+          <span class="when" id="runPlanWhen">day by day, with coach's comments <span class="chev">›</span></span>
+        </summary>
+        <div class="collapsible-body">
+          <div id="blockInfo"></div>
+          <div class="week-nav">
+            <button class="icon-btn" id="prevWeek" aria-label="Previous week">‹</button>
+            <span id="weekTitle"></span>
+            <button class="icon-btn" id="nextWeek" aria-label="Next week">›</button>
+          </div>
+          <div class="caption" id="weekSummary" style="text-align:center"></div>
+          <div id="planList"></div>
+        </div>
+      </details>
+
+      <details class="card collapsible">
+        <summary class="card-head">
+          <span class="label" style="--c: var(--gym)">Lifting plan</span>
+          <span class="when">to be written <span class="chev">›</span></span>
+        </summary>
+        <div class="collapsible-body">
+          <div class="empty">Daniel will write the lifting plan here. Until then, the current JEFIT routine is under Gym → Gym plan.</div>
+        </div>
+      </details>
     </section>
 
     <footer class="foot">Built by Daniel Hordern · <a href="https://horderns.com">horderns.com</a> · <a href="https://github.com/Hordern/health-dashboard">source</a></footer>

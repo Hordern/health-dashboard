@@ -71,6 +71,9 @@ create table if not exists plan_weeks (
   summary          text
 );
 
+-- Which training block a week belongs to ("Comeback", "Reset block", …).
+alter table plan_weeks add column if not exists block text;
+
 create table if not exists plan_days (
   date       date primary key,
   week_start date not null references plan_weeks (start_date) on delete cascade,

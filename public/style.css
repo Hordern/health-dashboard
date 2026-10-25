@@ -133,6 +133,14 @@ section:first-of-type h2 { margin-top: 0; }
 .tile-value .unit { font-size: 13px; }
 .delta { display: block; font-size: 12px; font-weight: 600; color: var(--c, var(--muted)); margin-top: 2px; }
 
+/* Running plan: block header and the coach's comment under each run. */
+.block-info { background: var(--track); border-radius: 14px; padding: 12px 14px; margin-bottom: 12px; font-size: 14px; }
+.block-info p { margin: 6px 0; color: var(--muted); }
+.block-info ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.comment { margin-top: 8px; padding: 8px 12px; border-left: 3px solid var(--coach); background: color-mix(in srgb, var(--coach) 6%, transparent); border-radius: 0 10px 10px 0; font-size: 13.5px; }
+.row-today { background: color-mix(in srgb, var(--run) 7%, transparent); border-radius: 12px; padding-left: 8px; padding-right: 8px; }
+#weekSummary { margin: 4px 0 10px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
 /* Gym plan day pills. */
 .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .pill { border: none; cursor: pointer; padding: 6px 12px; border-radius: 999px; font: 600 13px var(--sans); background: var(--track); color: var(--text); text-transform: capitalize; }
