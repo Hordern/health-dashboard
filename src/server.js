@@ -3,6 +3,8 @@ import express from "express";
 import { getSetting, query } from "./db.js";
 import { authorizeUrl, completeAuthorization, RECONNECT_FLAG, TOKEN_KEY as WITHINGS_TOKEN_KEY } from "./sources/withings.js";
 import { SIGN_IN_FLAG } from "./sources/garmin.js";
+import { blockReview } from "./block.js";
+import { mountMcp } from "./mcp.js";
 
 const app = express();
 
@@ -60,7 +62,7 @@ async function alerts() {
 
 app.get("/api/dashboard", async (_req, res, next) => {
   try {
-    const [weeks, days, health, weights, runs, recent, gym, note, syncs] = await Promise.all([
+    const [weeks, days, health, weights, runs, recent, gym, note, syncs, gymPlan, lastByDay, block] = await Promise.all([
       query(`select * from plan_weeks order by start_date`),
       query(`select p.*, (select sum(distance_km) from activities a where a.date = p.date and a.type = 'running') as actual_km
              from plan_days p order by date`),
@@ -73,8 +75,15 @@ app.get("/api/dashboard", async (_req, res, next) => {
       query(`select date, name, exercises from gym_sessions where date > current_date - 14 order by date desc`),
       query(`select date, model, body from coaching_notes order by date desc limit 1`),
       query(`select distinct on (source) source, started_at, ok, message from sync_runs order by source, started_at desc`),
+      getSetting("gym_plan"),
+      // When each routine day was last trained, for the gym plan's "last done".
+      query(`select name, max(date)::text as last from gym_sessions where name is not null group by name`),
+      blockReview(),
     ]);
-    res.json({ alerts: await alerts(), weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs });
+    res.json({
+      alerts: await alerts(), weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs,
+      gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block,
+    });
   } catch (err) {
     next(err);
   }
@@ -115,6 +124,8 @@ app.get("/withings/callback", async (req, res, next) => {
     next(err);
   }
 });
+
+mountMcp(app, express); // Claude connector at /mcp/<MCP_KEY>
 
 app.use(express.static(new URL("../public", import.meta.url).pathname));
 

@@ -48,6 +48,7 @@
         <div class="card" id="weekCard"></div>
         <div class="card" id="nextCard"></div>
       </div>
+      <div class="card" id="blockCard"></div>
       <div class="cards cards-2">
         <div class="card">
           <div class="card-head"><span class="label" style="--c: var(--run)">Weekly volume</span><span class="when">planned vs actual km</span></div>
@@ -81,6 +82,11 @@
 
     <section id="gym">
       <h2>Gym</h2>
+      <!-- Collapsed by default: a routine day can have 20+ exercises. -->
+      <details class="card collapsible" id="gymPlanCard">
+        <summary class="card-head" id="gymPlanHead"></summary>
+        <div class="collapsible-body" id="gymPlan"></div>
+      </details>
       <div class="card" id="gymList"></div>
     </section>
 

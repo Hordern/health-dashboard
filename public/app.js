@@ -274,6 +274,96 @@ function renderGym(gym) {
   }).join("") : '<div class="empty">No JEFIT sessions in the last 14 days.</div>');
 }
 
+// ---------- Block review: is the current block working? ----------
+
+// One tile: a value, an optional "of N" target, and the change vs the previous
+// 4 weeks. `better` says which direction is good ("up", "down" or null).
+function tile(title, value, { of, unit = "", delta, better, dp = 0 } = {}) {
+  let change = "";
+  if (delta != null && Math.abs(delta) >= 10 ** -dp / 2) {
+    const good = better === "up" ? delta > 0 : better === "down" ? delta < 0 : null;
+    const color = good == null ? "--muted" : good ? "--ok" : "--bad";
+    change = `<span class="delta" style="--c: var(${color})">${delta > 0 ? "▲" : "▼"} ${Math.abs(delta).toFixed(dp)}</span>`;
+  }
+  return `<div class="tile">
+    <div class="tile-title">${title}</div>
+    <div class="tile-value">${value ?? "—"}${value != null && unit ? `<span class="unit">${unit}</span>` : ""}${of != null ? `<span class="unit"> of ${of}</span>` : ""}</div>
+    ${change || '<span class="delta">&nbsp;</span>'}
+  </div>`;
+}
+
+function renderBlock(block) {
+  const card = $("blockCard");
+  const draw = (view) => {
+    const b = view === "last4" ? block.last4 : block.sinceStart;
+    const prev = view === "last4" ? block.prev4 : null; // deltas only make sense against an equal-length window
+    const d = (key) => (prev && b[key] != null && prev[key] != null ? b[key] - prev[key] : null);
+    const pct = (a, n) => (n ? `${Math.round((a / n) * 100)}%` : "—");
+    card.innerHTML = `
+      <div class="card-head">${label("Block review", "spark", "--run")}
+        <div class="segmented" id="blockRange">
+          <button data-v="last4" class="${view === "last4" ? "on" : ""}">Last 4 weeks</button>
+          <button data-v="since" class="${view === "since" ? "on" : ""}">Since ${fmtShort(block.sinceStart.start)}</button>
+        </div>
+      </div>
+      <div class="tiles">
+        ${tile("Planned runs done", b.runs_done, { of: b.runs_planned, delta: d("runs_done"), better: "up" })}
+        ${tile("Distance", b.km, { of: `${b.km_planned} km`, delta: d("km"), better: "up", dp: 1 })}
+        ${tile("Runs under HR guide", b.runs_under_guide, { of: b.runs, delta: d("runs_under_guide"), better: "up" })}
+        ${tile("Avg run HR", b.avg_run_hr, { unit: "bpm", delta: d("avg_run_hr"), better: "down" })}
+        ${tile("Gym sessions / week", b.gym_per_week, { delta: d("gym_per_week"), better: null, dp: 1 })}
+        ${tile("Readiness", b.readiness, { delta: d("readiness"), better: "up" })}
+        ${tile("HRV", b.hrv, { unit: "ms", delta: d("hrv"), better: "up", dp: 1 })}
+        ${tile("Resting HR", b.resting_hr, { unit: "bpm", delta: d("resting_hr"), better: "down", dp: 1 })}
+        ${tile("Sleep score", b.sleep_score, { delta: d("sleep_score"), better: "up" })}
+        ${tile("Weight change", b.weight_change_kg != null ? `${b.weight_change_kg > 0 ? "+" : ""}${b.weight_change_kg}` : null, { unit: "kg" })}
+      </div>
+      <div class="caption">Run adherence ${pct(b.runs_done, b.runs_planned)} · ${b.runs} runs logged in total${prev ? " · ▲▼ vs the 4 weeks before" : ""}</div>`;
+    card.querySelectorAll("#blockRange button").forEach((btn) => (btn.onclick = () => draw(btn.dataset.v)));
+  };
+  if (block?.sinceStart) draw("last4");
+  else card.innerHTML = `${label("Block review", "spark", "--run")}<div class="empty">No plan imported yet.</div>`;
+}
+
+// ---------- Gym plan (current JEFIT routine) ----------
+
+// Sets → "1×12 @ 20 kg · 5×6 @ 30 kg": consecutive identical sets are grouped.
+function setSummary(sets) {
+  const groups = [];
+  for (const st of sets) {
+    const last = groups.at(-1);
+    if (last && last.reps === st.reps && last.weight_kg === st.weight_kg) last.n++;
+    else groups.push({ ...st, n: 1 });
+  }
+  return groups.map((g) => `${g.n}×${g.reps ?? "?"}${g.weight_kg ? ` @ ${g.weight_kg} kg` : ""}`).join(" · ");
+}
+
+function renderGymPlan(plan, lastDone) {
+  const card = $("gymPlan");
+  if (!plan) {
+    $("gymPlanHead").innerHTML = label("Gym plan", "dumbbell", "--gym");
+    return (card.innerHTML = '<div class="empty">Appears after the next JEFIT sync.</div>');
+  }
+  // Open on the day trained longest ago — the one most likely to be next.
+  const oldest = [...plan.days].sort((a, b) => (lastDone[a.name] ?? "").localeCompare(lastDone[b.name] ?? ""))[0];
+  $("gymPlanHead").innerHTML = `${label(`Gym plan · ${plan.name}`, "dumbbell", "--gym")}
+    <span class="when">${plan.days.length} days · next up ${esc(oldest.name)} <span class="chev">›</span></span>`;
+  const draw = (dayName) => {
+    const day = plan.days.find((d) => d.name === dayName);
+    card.innerHTML = `
+      <div class="caption" style="margin: 0 0 8px">${esc(dayName)}: ${lastDone[dayName] ? `last done ${relDay(lastDone[dayName])}` : "not done recently"}</div>
+      <div class="pills">${plan.days.map((d) => `<button class="pill${d.name === dayName ? " on" : ""}" data-day="${esc(d.name)}">${esc(d.name)}</button>`).join("")}</div>
+      ${day.exercises.map((e, i) => `
+        <div class="row">
+          <div class="row-date"><b>${i + 1}</b></div>
+          <div class="row-main"><div class="row-title">${esc(e.name)}</div><div class="row-detail">${esc(setSummary(e.sets))}</div></div>
+          <div class="row-side">${e.sets.length}<div class="muted">sets</div></div>
+        </div>`).join("")}`;
+    card.querySelectorAll(".pill").forEach((p) => (p.onclick = () => draw(p.dataset.day)));
+  };
+  draw(oldest.name);
+}
+
 // ---------- Charts (Chart.js, styled to match the cards) ----------
 
 function chartDefaults() {
@@ -423,6 +513,8 @@ async function main() {
   renderWeek(data);
   renderPlan(data);
   renderActivities(data.recent);
+  renderBlock(data.block);
+  renderGymPlan(data.gymPlan, data.gymLastDone ?? {});
   renderGym(data.gym);
   renderCharts(data);
 }

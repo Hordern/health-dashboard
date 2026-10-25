@@ -125,6 +125,19 @@ section:first-of-type h2 { margin-top: 0; }
 .status { width: 8px; height: 8px; border-radius: 50%; margin: 6px auto 0; background: var(--line); }
 .status.done { background: var(--ok); } .status.flag { background: var(--warn); } .status.missed { background: var(--bad); }
 
+/* Block review tiles. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap: 10px; }
+.tile { background: var(--track); border-radius: 14px; padding: 10px 12px; }
+.tile-title { font-size: 12px; color: var(--muted); font-weight: 500; }
+.tile-value { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-top: 2px; }
+.tile-value .unit { font-size: 13px; }
+.delta { display: block; font-size: 12px; font-weight: 600; color: var(--c, var(--muted)); margin-top: 2px; }
+
+/* Gym plan day pills. */
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pill { border: none; cursor: pointer; padding: 6px 12px; border-radius: 999px; font: 600 13px var(--sans); background: var(--track); color: var(--text); text-transform: capitalize; }
+.pill.on { background: var(--gym); color: #fff; }
+
 /* Lists (plan, activity, gym). */
 .row { display: flex; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); align-items: flex-start; }
 .row:first-child { border-top: none; padding-top: 2px; }
