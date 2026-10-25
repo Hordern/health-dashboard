@@ -7,7 +7,8 @@
     "import-plan": "node src/plan/import-markdown.js",
     "garmin:login": "node scripts/garmin-login.js",
     "garmin:check": "node scripts/garmin-check.js",
-    "setup:python": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    "setup:python": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
+    "garmin:remap": "node scripts/garmin-remap.js"
   },
   "type": "module",
   "private": "true",

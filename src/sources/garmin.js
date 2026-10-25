@@ -40,20 +40,25 @@ export function runGarminScript(mode, input, { interactive = false, args = [] } 
 const isoDaysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 const num = (v) => (typeof v === "number" ? v : null);
 
-// Garmin's raw field paths are undocumented. Check these against the first real
-// sync (`npm run garmin:check`); the raw payload is stored, so a fix needs no re-fetch.
+// Garmin's raw field paths are undocumented; these were checked against the
+// coaching notes for 19–25 Oct 2026. The raw payload is stored, so a mapping fix
+// can be re-applied with `npm run garmin:remap` instead of re-fetching.
 export function healthRow(day) {
   const sleep = day.sleep?.dailySleepDTO ?? {};
-  // Training readiness is a list of readings through the day; the first is the latest.
-  const readiness = Array.isArray(day.readiness) ? day.readiness[0] ?? {} : {};
+  // Training readiness is a list of readings through the day, newest first. The
+  // headline score is the wake-up one (Garmin's morning report); later readings
+  // drop after workouts. Acute load comes from the newest, so it includes today's training.
+  const readings = Array.isArray(day.readiness) ? day.readiness : [];
+  const wake = readings.find((r) => r.inputContext === "AFTER_WAKEUP_RESET") ?? readings.at(-1) ?? {};
+  const latest = readings[0] ?? {};
   return {
     date: day.date,
     resting_hr: num(day.summary?.restingHeartRate),
     hrv_last_night: num(day.hrv?.hrvSummary?.lastNightAvg),
     hrv_status: day.hrv?.hrvSummary?.status ?? null,
-    readiness_score: num(readiness.score),
-    readiness_level: readiness.level ?? null,
-    acute_load: num(readiness.acuteLoad),
+    readiness_score: num(wake.score),
+    readiness_level: wake.level ?? null,
+    acute_load: num(latest.acuteLoad),
     sleep_score: num(sleep.sleepScores?.overall?.value),
     sleep_s: num(sleep.sleepTimeSeconds),
     deep_s: num(sleep.deepSleepSeconds),
