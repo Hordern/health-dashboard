@@ -1,9 +1,12 @@
-# Running Dashboard
+# Health Dashboard
 
-Daniel's running coach dashboard, hosted on Railway. It pulls Garmin (runs and
-recovery), Withings (weight) and JEFIT (gym sessions, not built yet), shows them
-next to the running plan from `~/Claude/Running-Coach/CURRENT_PLAN.md`, and
-writes a daily Claude coaching note.
+Daniel's personal health dashboard, hosted on Railway: one page showing
+activities and runs, recovery (resting HR, HRV, sleep, training readiness),
+weight and gym sessions, alongside the current running plan and a daily Claude
+coaching note.
+
+Data comes from Garmin, Withings scales, JEFIT (not built yet) and the plan in
+`~/Claude/Running-Coach/CURRENT_PLAN.md`.
 
 ## How it fits together
 

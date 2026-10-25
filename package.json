@@ -1,5 +1,5 @@
 {
-  "name": "running-dashboard",
+  "name": "health-dashboard",
   "scripts": {
     "start": "node src/server.js",
     "daily": "node src/daily.js",
