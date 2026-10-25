@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Running Dashboard</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Daniel's Running Coach Dashboard</h1>
+    <div class="sub" id="syncStatus">Loading…</div>
+  </div>
+  <button class="btn" onclick="location.reload()">Reload</button>
+</header>
+
+<div class="grid" id="cards"></div>
+
+<div class="panel">
+  <h2 id="noteTitle">Coach's note</h2>
+  <div id="note" class="note-body"><span class="muted">No note yet.</span></div>
+</div>
+
+<div class="two-col">
+  <div class="panel"><h2>Resting HR &amp; overnight HRV — 14 days</h2><div class="chart"><canvas id="hrvChart"></canvas></div></div>
+  <div class="panel"><h2>Training readiness &amp; acute load — 14 days</h2><div class="chart"><canvas id="readinessChart"></canvas></div></div>
+</div>
+
+<div class="panel">
+  <h2>Weekly running plan</h2>
+  <div class="week-nav">
+    <button class="btn-light" id="prevWeek">&larr; Prev</button>
+    <div><div class="week-title" id="weekTitle"></div><div class="week-total" id="weekTotal"></div></div>
+    <button class="btn-light" id="nextWeek">Next &rarr;</button>
+  </div>
+  <div class="table-wrap" id="planTable"></div>
+  <div class="sub">Plan from CURRENT_PLAN.md. Actual km comes from Garmin runs on that date.</div>
+</div>
+
+<div class="two-col">
+  <div class="panel"><h2>Weekly volume — planned vs actual (km)</h2><div class="chart"><canvas id="volumeChart"></canvas></div></div>
+  <div class="panel">
+    <h2>Avg HR per run</h2><div class="chart"><canvas id="hrTrendChart"></canvas></div>
+    <div class="sub">Guides: easy &lt;148 bpm, long &lt;150 bpm (excluding the finishing hill).</div>
+  </div>
+</div>
+
+<div class="two-col">
+  <div class="panel"><h2>Weight — Withings, 120 days</h2><div class="chart"><canvas id="weightChart"></canvas></div></div>
+  <div class="panel"><h2>Gym sessions — JEFIT, 14 days</h2><div class="table-wrap" id="gymTable"></div></div>
+</div>
+
+<div class="panel"><h2>Activity log — 10 days</h2><div class="table-wrap" id="activityTable"></div></div>
+<div class="panel"><h2>Sleep — 7 nights</h2><div class="table-wrap" id="sleepTable"></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<script src="app.js"></script>
+</body>
+</html>
