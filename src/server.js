@@ -13,6 +13,7 @@ import { isSyncing, requestSync } from "./sync.js";
 import { localDate, nextSync } from "./schedule.js";
 import { TYPE_LABEL } from "./coach/review.js";
 import { liftingBlock, recentLifting, weekAdherence } from "./lifting/analysis.js";
+import { liftingWorkbook } from "./lifting/workbook.js";
 
 const app = express();
 
@@ -122,6 +123,20 @@ app.get("/api/dashboard", async (_req, res, next) => {
 // The OAuth state lives in a short-lived cookie in the visitor's own browser, so
 // another visit to /withings/connect can't overwrite it mid-flow.
 const STATE_COOKIE = "withings_oauth_state";
+
+// The lifting program as an Excel workbook, built fresh from the data on each download.
+app.get("/api/lifting.xlsx", async (_req, res, next) => {
+  try {
+    const today = localDate();
+    const wb = await liftingWorkbook(today);
+    res.set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.set("Content-Disposition", `attachment; filename="lifting-program-${today}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    next(err);
+  }
+});
 
 app.get("/withings/connect", async (_req, res, next) => {
   try {

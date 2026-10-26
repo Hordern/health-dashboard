@@ -17,6 +17,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^1.1.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
+    "exceljs": "^4.4.0",
     "express": "^5.3.0",
     "pg": "^8.23.1",
     "withings-node-oauth2": "^2.1.1",

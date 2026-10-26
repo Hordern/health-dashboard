@@ -377,7 +377,8 @@ function renderLiftingPlan(lifting) {
           }).join("")}
         </table></div>`).join("")}
       ${plan.sessions.some((s) => s.parts.some((p) => p.exercises.some((e) => e.derived))) ? '<div class="caption"><span class="chip" style="--c: var(--warn)">confirm</span> prescriptions were derived from your latest session; confirm or change them through Claude.</div>' : ""}
-      <div class="caption">Updated ${relDay(plan.updated_at.slice(0, 10))} by ${esc(plan.updated_by)} · rest day: ${esc(plan.rest_day?.note ?? "Sunday")}</div>`;
+      <div class="caption">Updated ${relDay(plan.updated_at.slice(0, 10))} by ${esc(plan.updated_by)} · rest day: ${esc(plan.rest_day?.note ?? "Sunday")}</div>
+      <a class="btn" href="/api/lifting.xlsx">Download program spreadsheet (.xlsx)</a>`;
     $("liftingPlan").querySelectorAll(".lift-day").forEach((b) => (b.onclick = () => draw(b.dataset.s)));
   };
   // Open on today's planned session, or the first one.
@@ -410,7 +411,7 @@ function renderLiftSessions(lifting) {
       ${s.extra?.length ? `<div class="caption">Extra (not in plan): ${esc(s.extra.join(", "))}</div>` : ""}
     </details>`;
   const rest = lifting.sessions.slice(4);
-  $("gymList").innerHTML = `<div class="card-head">${label("Sessions vs plan", "dumbbell", "--gym")}<span class="when">JEFIT · last 14 days</span></div>`
+  $("gymList").innerHTML = `<div class="card-head">${label("Sessions vs plan", "dumbbell", "--gym")}<span class="when">JEFIT · last 14 days · <a href="/api/lifting.xlsx">spreadsheet</a></span></div>`
     + lifting.sessions.slice(0, 4).map(card).join("")
     + (rest.length ? `<details class="more"><summary>Show ${rest.length} more</summary>${rest.map(card).join("")}</details>` : "");
 }
