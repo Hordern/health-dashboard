@@ -183,3 +183,10 @@ alter table health_daily add column if not exists body_battery integer;
 alter table health_daily add column if not exists body_battery_wake integer;
 alter table health_daily add column if not exists body_battery_high integer;
 alter table health_daily add column if not exists body_battery_low integer;
+
+-- The coach's comment on a gym session (written by the nightly coach).
+alter table gym_sessions add column if not exists coach_comment text;
+
+-- The session compared with the lifting plan as it stood when reviewed (frozen
+-- so later plan changes don't rewrite history). See src/lifting/analysis.js.
+alter table gym_sessions add column if not exists plan_check jsonb;

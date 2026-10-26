@@ -323,10 +323,96 @@ function renderPlanChanges(changes) {
     </div>`).join("") : '<div class="empty">No edits since the plan moved online.</div>';
 }
 
-function renderLiftingPlan(plan) {
-  if (!plan?.text) return;
-  $("liftingWhen").innerHTML = `updated ${relDay(plan.updated_at.slice(0, 10))} by ${esc(plan.updated_by)} <span class="chev">›</span>`;
-  $("liftingPlan").innerHTML = markdown(plan.text);
+// ---------- Lifting (plan vs JEFIT sessions, from src/lifting/analysis.js) ----------
+
+const LIFT_STATUS = {
+  on_plan: ["on plan", "--ok"], progress_ready: ["ready to add load", "--run"],
+  below_range: ["below range", "--warn"], under_load: ["under load", "--warn"], missed: ["missed", "--bad"],
+};
+const liftChip = (status) => { const [t, c] = LIFT_STATUS[status] ?? [status, "--muted"]; return `<span class="chip" style="--c: var(${c})">${t}</span>`; };
+const progressText = (p) => (!p ? "" : `<span class="${["load_up", "reps_up"].includes(p.kind) ? "up" : ["load_down", "reps_down"].includes(p.kind) ? "down" : "muted"}">${esc(p.text)}</span>`);
+const prescription = (e) => `${e.load_kg != null ? `${e.load_note && /about/.test(e.load_note) ? "~" : ""}${e.load_kg} kg ` : ""}${e.sets_min === e.sets_max ? e.sets_min : `${e.sets_min}–${e.sets_max}`} × ${e.reps_min}–${e.reps_max}${e.load_note && !/about/.test(e.load_note) ? ` (${e.load_note})` : ""}`;
+
+// Coach → Lifting plan: the block, key lifts, this week vs the template, and each
+// session's prescriptions with the last result and the next target.
+function renderLiftingPlan(lifting) {
+  if (!lifting?.plan) return;
+  const { plan, block, week, sessions } = lifting;
+  $("liftingWhen").innerHTML = `${esc(block?.name ?? "Lifting")} · week ${block?.week ?? "–"} <span class="chev">›</span>`;
+  const latestFor = (sessionName, exName) => {
+    for (const s of sessions) {
+      if (s.plan_session !== sessionName) continue;
+      const e = s.exercises.find((x) => x.exercise === exName);
+      if (e) return { ...e, date: s.date };
+    }
+    return null;
+  };
+  const stateColor = { done: "--ok", partial: "--warn", not_yet: "--muted" };
+  const draw = (name) => {
+    const ps = plan.sessions.find((s) => s.name === name);
+    $("liftingPlan").innerHTML = `
+      ${block ? `<div class="block-info">
+        <div class="row-title">${esc(block.name)} · week ${block.week} · since ${fmtShort(block.start)}</div>
+        <p>${esc(block.method ?? "")}</p>
+        <div class="tiles">${block.key_lifts.map((k) => `<div class="tile"><div class="tile-title">${esc(k.name)}</div>
+          <div class="tile-value">${k.latest.kg}<span class="unit">kg</span></div>
+          <span class="delta" style="--c: var(${k.change_pct > 0 ? "--ok" : "--muted"})">${k.change_pct > 0 ? "▲" : ""} ${k.change_pct}% since ${fmtShort(k.first.date)} (${k.first.kg} kg)</span></div>`).join("")}</div>
+        <details><summary>How this block was worked out</summary><p>${esc(block.detected_from_history ?? "")}</p></details>
+      </div>` : ""}
+      <div class="caption">This week</div>
+      <div class="lift-week">${week.map((w) => `<button class="lift-day${w.session === name ? " on" : ""}" data-s="${esc(w.session)}">
+        <b>${esc(w.weekday)}</b>${esc(w.session)}<span class="dot" style="--c: var(${stateColor[w.state]})"></span>
+        <small>${w.state === "done" ? "done" : w.state === "partial" ? `${w.exercises_done}/${w.exercises_total}` : ""}</small></button>`).join("")}</div>
+      <div class="row-title" style="margin-top:12px">${esc(ps.name)} · ${esc(ps.variation ?? "")}</div>
+      ${ps.parts.map((part) => `
+        ${ps.parts.length > 1 ? `<div class="caption"><strong>${esc(part.name)}</strong></div>` : ""}
+        <div class="table-scroll"><table class="weeks lift-table">
+          <tr><th>Exercise</th><th>Prescription</th><th>Last time</th><th>Next</th></tr>
+          ${part.exercises.map((e) => {
+            const last = latestFor(ps.name, e.name);
+            return `<tr><td>${esc(e.name)}${e.derived ? ' <span class="chip" style="--c: var(--warn)" title="' + esc(e.derived) + '">confirm</span>' : ""}</td>
+              <td>${esc(prescription(e))}</td>
+              <td>${last ? `${esc(last.done)}<br>${liftChip(last.status)}` : '<span class="muted">—</span>'}</td>
+              <td>${last ? esc(last.next.text) : ""}</td></tr>`;
+          }).join("")}
+        </table></div>`).join("")}
+      ${plan.sessions.some((s) => s.parts.some((p) => p.exercises.some((e) => e.derived))) ? '<div class="caption"><span class="chip" style="--c: var(--warn)">confirm</span> prescriptions were derived from your latest session; confirm or change them through Claude.</div>' : ""}
+      <div class="caption">Updated ${relDay(plan.updated_at.slice(0, 10))} by ${esc(plan.updated_by)} · rest day: ${esc(plan.rest_day?.note ?? "Sunday")}</div>`;
+    $("liftingPlan").querySelectorAll(".lift-day").forEach((b) => (b.onclick = () => draw(b.dataset.s)));
+  };
+  // Open on today's planned session, or the first one.
+  const todayWd = asDate(todayIso()).toLocaleDateString("en-AU", { weekday: "short" }).slice(0, 3);
+  draw((plan.sessions.find((s) => s.weekday === todayWd) ?? plan.sessions[0]).name);
+}
+
+// Gym: each session as its plan session, every exercise against the plan,
+// progress since last time, and the coach's comment. Latest 4, rest behind a toggle.
+function renderLiftSessions(lifting) {
+  if (!lifting?.sessions?.length) return;
+  const card = (s) => `
+    <details class="lift-session"${s === lifting.sessions[0] ? " open" : ""}>
+      <summary>
+        <div class="row-date"><b>${relDay(s.date)}</b>${fmtShort(s.date)}</div>
+        <div class="row-main">
+          <div class="row-title">${esc(s.plan_session ?? s.jefit_name ?? "Workout")}${s.plan_session && s.planned_weekday && asDate(s.date).toLocaleDateString("en-AU", { weekday: "short" }).slice(0, 3) !== s.planned_weekday ? ` <span class="muted">(planned ${s.planned_weekday})</span>` : ""}</div>
+          <div class="row-detail">${s.summary ? `${s.summary.on_plan + s.summary.progress_ready} of ${s.exercises.length} on plan · ${s.summary.improved} improved${s.summary.progress_ready ? ` · ${s.summary.progress_ready} ready to add load` : ""}${s.summary.below ? ` · ${s.summary.below} below` : ""}` : ""}${s.frozen ? "" : ' · <span title="Compared with the current plan; sessions are frozen once checked at 7pm">live</span>'}</div>
+        </div>
+        <span class="chev">›</span>
+      </summary>
+      ${s.coach_comment ? `<div class="comment">${esc(s.coach_comment)}</div>` : ""}
+      <div class="table-scroll"><table class="weeks lift-table">
+        <tr><th>Exercise</th><th>Plan</th><th>Done</th><th>Vs plan</th><th>Vs last time</th><th>Next</th></tr>
+        ${s.exercises.map((e) => `<tr><td>${esc(e.exercise)}</td>
+          <td>${e.prescribed.load_kg != null ? `${e.prescribed.load_kg} kg ` : ""}${esc(e.prescribed.sets)} × ${esc(e.prescribed.reps)}</td>
+          <td>${esc(e.done)}</td><td>${liftChip(e.status)}</td><td>${progressText(e.progress)}</td><td>${esc(e.next.text)}</td></tr>`).join("")}
+      </table></div>
+      ${s.missing?.length ? `<div class="caption">Not done: ${esc(s.missing.map((m) => m.exercise).join(", "))}</div>` : ""}
+      ${s.extra?.length ? `<div class="caption">Extra (not in plan): ${esc(s.extra.join(", "))}</div>` : ""}
+    </details>`;
+  const rest = lifting.sessions.slice(4);
+  $("gymList").innerHTML = `<div class="card-head">${label("Sessions vs plan", "dumbbell", "--gym")}<span class="when">JEFIT · last 14 days</span></div>`
+    + lifting.sessions.slice(0, 4).map(card).join("")
+    + (rest.length ? `<details class="more"><summary>Show ${rest.length} more</summary>${rest.map(card).join("")}</details>` : "");
 }
 
 // Latest 4 activities, with a toggle for the rest.
@@ -837,11 +923,12 @@ async function main() {
   renderWeek(data);
   renderPlan(data);
   renderPlanChanges(data.planChanges ?? []);
-  renderLiftingPlan(data.liftingPlan);
+  renderLiftingPlan(data.lifting);
   renderActivities(data.recent);
   renderBlock(data.block, data.blockProgress);
   renderGymPlan(data.gymPlan, data.gymLastDone ?? {});
   renderGym(data.gym);
+  renderLiftSessions(data.lifting); // replaces the plain list when the lifting plan exists
   renderCharts(data);
 }
 

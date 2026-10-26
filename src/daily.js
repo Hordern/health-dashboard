@@ -10,6 +10,7 @@ import { COACH_HOUR_LOCAL, localDate, localHour } from "./schedule.js";
 import { activeBlock } from "./plan/store.js";
 import { blockStatus } from "./plan/status.js";
 import { reviewBlock } from "./coach/review.js";
+import { checkLifting } from "./lifting/coach.js";
 
 await syncData();
 
@@ -36,6 +37,7 @@ if (localHour() >= COACH_HOUR_LOCAL && !done) {
     await query(`update training_blocks set review = $2, review_at = now() where name = $1`, [block.name, JSON.stringify(review)]);
     return `${review.progress} / ${review.recovery} → ${review.decision}; recommends ${review.recommended_block.type}`;
   });
+  await recordSync("lifting", () => checkLifting());
   await recordSync("coach", () => runNightlyCoach());
 }
 

@@ -18,6 +18,10 @@ const AUTHOR = "nightly-coach";
 
 const Output = z.object({
   note: z.string().describe("Today's coaching note for the dashboard, markdown, under 250 words. If active_block.review exists, explain it."),
+  lift_reviews: z.array(z.object({
+    session_id: z.string().describe("id of a session in lifting_sessions_to_review"),
+    comment: z.string().describe("Two to four sentences on the session against the plan: what hit target, what progressed, what fell short, and the focus for next time. Facts from plan_check only."),
+  })),
   run_reviews: z.array(z.object({
     date: z.string().describe("YYYY-MM-DD of a past plan day listed in reviewable_days"),
     status: z.enum(["done", "flag", "missed"]).describe("done = as planned; flag = happened but needs attention (over distance, HR well over guide…); missed = didn't happen"),
@@ -46,6 +50,9 @@ async function context(day) {
                                 sleep_score, sleep_s, deep_s, rem_s from health_daily where date >= ${since} order by date`),
     weights: await query(`select measured_at::text, weight_kg from weights where measured_at >= ${since} order by measured_at`),
     gym_sessions: await query(`select date::text, name, exercises from gym_sessions where date >= current_date - 14 order by date`),
+    // Sessions checked against the lifting plan (by the lifting check) but not yet commented on.
+    lifting_sessions_to_review: await query(`select id, date::text, plan_check from gym_sessions where plan_check is not null and coach_comment is null and date >= current_date - 3 order by date`),
+    lifting_block: (await getSetting("lifting_plan"))?.block ?? null,
     previous_notes: await query(`select date::text, body from coaching_notes where date >= current_date - 7 order by date`),
   };
 }
@@ -69,7 +76,8 @@ export async function runNightlyCoach() {
     messages: [{
       role: "user",
       content:
-        `Today is ${day}. 1) Review each day in reviewable_days against the Garmin activities and recovery data. ` +
+        `Today is ${day}. 1) Review each day in reviewable_days against the Garmin activities and recovery data, ` +
+        `and comment on each session in lifting_sessions_to_review from its plan_check (the lifting plan is double progression; the rules engine already raised any loads). ` +
         `2) Write today's note: what happened since the last note, how recovery looks (readiness flags), and the next planned session. ` +
         `The rules engine decides plan changes (readiness.actions, active_block.review); explain its decisions, don't make your own. ` +
         `Facts come only from the JSON below; say so when data is missing rather than guessing. ` +
@@ -89,6 +97,13 @@ export async function runNightlyCoach() {
   );
 
   // Apply only what the coach is allowed to touch; anything else is reported, not applied.
+  const liftIds = new Set(data.lifting_sessions_to_review.map((s) => s.id));
+  let lifted = 0;
+  for (const l of out.lift_reviews) {
+    if (!liftIds.has(l.session_id)) continue;
+    await query(`update gym_sessions set coach_comment = $2 where id = $1`, [l.session_id, l.comment]);
+    lifted++;
+  }
   const reviewable = new Set(data.reviewable_days.map((d) => d.date));
   const skipped = [];
   let reviewed = 0;
@@ -98,7 +113,7 @@ export async function runNightlyCoach() {
     reviewed++;
   }
 
-  return `note ${out.note.length} chars, ${reviewed} run reviews` +
+  return `note ${out.note.length} chars, ${reviewed} run reviews, ${lifted} lifting comments` +
     (skipped.length ? `, skipped: ${skipped.join("; ")}` : "") +
     `; ${response.usage.input_tokens} in / ${response.usage.output_tokens} out`;
 }

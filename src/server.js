@@ -12,6 +12,7 @@ import { recentCheckins, saveCheckin } from "./coach/checkins.js";
 import { isSyncing, requestSync } from "./sync.js";
 import { localDate, nextSync } from "./schedule.js";
 import { TYPE_LABEL } from "./coach/review.js";
+import { liftingBlock, recentLifting, weekAdherence } from "./lifting/analysis.js";
 
 const app = express();
 
@@ -107,6 +108,7 @@ app.get("/api/dashboard", async (_req, res, next) => {
       alerts: await alerts(), weeks, days, health, weights, runs, recent, gym, note: note[0] ?? null, syncs,
       gymPlan, gymLastDone: Object.fromEntries(lastByDay.map((r) => [r.name, r.last])), block, runningBlock, planChanges, liftingPlan, status, checkins, readiness: readiness ?? null,
       blockProgress: await blockProgress(runningBlock),
+      lifting: await liftingSummary(),
     });
   } catch (err) {
     next(err);
@@ -193,6 +195,15 @@ async function dataStatus() {
     query(`select at, author, action, target from plan_changes order by at desc limit 1`),
   ]);
   return { sources, plan_last_edit: lastEdit ?? null, next_sync: nextSync(), syncing: isSyncing() };
+}
+
+// Lifting: the plan, the lifting block (week, key lifts), this week's sessions
+// against the weekly template, and recent sessions compared with the plan.
+async function liftingSummary() {
+  const { plan, sessions } = await recentLifting(14);
+  if (!plan?.sessions) return null;
+  const today = localDate();
+  return { plan, block: await liftingBlock(plan, today), week: weekAdherence(plan, sessions, today), sessions };
 }
 
 // The active block's label ("Base block 1 · Week 1 of 3 · Build") and minutes

@@ -9,7 +9,8 @@
     "garmin:check": "node scripts/garmin-check.js",
     "setup:python": "python3 -m venv .venv && .venv/bin/pip install -r requirements.txt",
     "garmin:remap": "node scripts/garmin-remap.js",
-    "recut": "node scripts/recut-to-spec.js"
+    "recut": "node scripts/recut-to-spec.js",
+    "seed-lifting": "node scripts/seed-lifting-plan.js"
   },
   "type": "module",
   "private": "true",

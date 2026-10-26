@@ -228,19 +228,48 @@ export async function updateBlock(name, patch, meta) {
   });
 }
 
-// The lifting plan is free text (markdown) that Daniel or an agent maintains.
-export async function setLiftingPlan(text, meta) {
+// The lifting plan: structured sessions → parts → exercises with prescriptions
+// (load, sets, rep range, step), plus the current lifting block. See
+// scripts/seed-lifting-plan.js for the shape and src/lifting/analysis.js for use.
+async function saveLiftingPlan(client, plan, meta, action, target, before, after) {
+  const value = { ...plan, updated_at: new Date().toISOString(), updated_by: meta.author };
+  await client.query(
+    `insert into settings (key, value, updated_at) values ('lifting_plan', $1, now())
+     on conflict (key) do update set value = excluded.value, updated_at = now()`,
+    [JSON.stringify(value)],
+  );
+  await logChange(client, meta, action, target, before, after);
+  return value;
+}
+
+export async function setLiftingPlan(plan, meta) {
   requireMeta(meta);
+  if (!Array.isArray(plan?.sessions)) throw new Error("plan.sessions is required");
   return transaction(async (client) => {
     const [old] = (await client.query(`select value from settings where key = 'lifting_plan'`)).rows;
-    const value = { text, updated_at: new Date().toISOString(), updated_by: meta.author };
-    await client.query(
-      `insert into settings (key, value, updated_at) values ('lifting_plan', $1, now())
-       on conflict (key) do update set value = excluded.value, updated_at = now()`,
-      [JSON.stringify(value)],
-    );
-    await logChange(client, meta, "set_lifting_plan", "lifting_plan", old ? { text: old.value.text } : null, { text });
-    return value;
+    const summary = (p) => p?.sessions && { block: p.block?.name, sessions: p.sessions.map((s) => `${s.name} (${s.parts.reduce((n, x) => n + x.exercises.length, 0)})`) };
+    return saveLiftingPlan(client, plan, meta, "set_lifting_plan", "lifting_plan", summary(old?.value), summary(plan));
+  });
+}
+
+// Change one exercise's prescription, e.g. { load_kg: 212.5 } after a progression.
+export const LIFT_FIELDS = ["load_kg", "load_note", "sets_min", "sets_max", "reps_min", "reps_max", "step_kg"];
+export async function updateLiftingExercise(sessionName, exerciseName, patch, meta) {
+  requireMeta(meta);
+  const fields = LIFT_FIELDS.filter((f) => patch[f] !== undefined);
+  if (!fields.length) throw new Error(`Nothing to change. Editable fields: ${LIFT_FIELDS.join(", ")}`);
+  return transaction(async (client) => {
+    const [row] = (await client.query(`select value from settings where key = 'lifting_plan' for update`)).rows;
+    const plan = row?.value;
+    const session = plan?.sessions?.find((s) => s.name.toLowerCase() === sessionName.toLowerCase());
+    if (!session) throw new Error(`No session "${sessionName}". Sessions: ${plan?.sessions?.map((s) => s.name).join(", ")}`);
+    const exercise = session.parts.flatMap((p) => p.exercises).find((e) => e.name.toLowerCase() === exerciseName.toLowerCase());
+    if (!exercise) throw new Error(`No exercise "${exerciseName}" in ${session.name}`);
+    const before = Object.fromEntries(fields.map((f) => [f, exercise[f] ?? null]));
+    for (const f of fields) exercise[f] = patch[f];
+    delete exercise.derived; // a deliberate edit confirms a derived prescription
+    await saveLiftingPlan(client, plan, meta, "update_lift", `${session.name}: ${exercise.name}`, before, Object.fromEntries(fields.map((f) => [f, patch[f]])));
+    return { session: session.name, exercise: exercise.name, before, after: patch };
   });
 }
 

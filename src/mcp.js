@@ -13,6 +13,8 @@ import { getSetting, query } from "./db.js";
 import { blockReview, blockSummary } from "./block.js";
 import { DAY_FIELDS, STATUSES, createBlock, moveRun, recentChanges, setLiftingPlan, updateBlock, updatePlanDay } from "./plan/store.js";
 import { recentCheckins, saveCheckin } from "./coach/checkins.js";
+import { getLiftingPlan, liftingBlock, recentLifting } from "./lifting/analysis.js";
+import { LIFT_FIELDS, updateLiftingExercise } from "./plan/store.js";
 
 const MAX_ROWS = 500; // keeps a tool result small enough for Claude's context
 
@@ -127,8 +129,16 @@ function buildServer({ canWrite }) {
   }, async ({ days }) => json(await recentCheckins(days)));
 
   server.registerTool("lifting_plan", {
-    description: "Daniel's lifting plan (free text he maintains), separate from the JEFIT routine in gym_plan.",
-  }, async () => json(await getSetting("lifting_plan")));
+    description: "Daniel's lifting plan: the weekly template (Legs A Mon, Back & Chest A Tue, Arms & Shoulders A Wed, Legs B Thu, Back & Chest B Fri, Arms & Shoulders B Sat), each session's exercises with prescriptions (load, sets, rep range, progression step), and the current lifting block with key-lift progress.",
+  }, async () => {
+    const plan = await getLiftingPlan();
+    return json({ plan, block: plan && await liftingBlock(plan, new Date().toLocaleDateString("en-CA", { timeZone: process.env.TZ ?? "Australia/Melbourne" })) });
+  });
+
+  server.registerTool("lifting_sessions", {
+    description: "Recent gym sessions compared with the lifting plan: which plan session each was, every exercise's load/sets/reps against its prescription (on_plan, progress_ready, below_range, under_load), progress since last time, the next target, and the coach's comment.",
+    inputSchema: { days: z.number().int().min(1).max(60).default(14) },
+  }, async ({ days }) => json((await recentLifting(days)).sessions));
 
   server.registerTool("coaching_notes", {
     description: "The daily coaching notes Claude wrote for the dashboard.",
@@ -224,10 +234,23 @@ function registerWriteTools(server) {
     },
   }, async ({ date: d, author, ...values }) => attempt(() => saveCheckin(d, values, author)));
 
+  server.registerTool("update_lifting_exercise", {
+    description: `Change one exercise's prescription in the lifting plan, e.g. a new load after a progression or a different rep range. Editable: ${LIFT_FIELDS.join(", ")}. Session and exercise names as in lifting_plan.`,
+    inputSchema: {
+      session: z.string(), exercise: z.string(),
+      changes: z.object({
+        load_kg: z.number().nullable().optional(), load_note: z.string().optional(),
+        sets_min: z.number().int().optional(), sets_max: z.number().int().optional(),
+        reps_min: z.number().int().optional(), reps_max: z.number().int().optional(), step_kg: z.number().optional(),
+      }),
+      ...meta,
+    },
+  }, async ({ session, exercise, changes, author, reason }) => attempt(() => updateLiftingExercise(session, exercise, changes, { author, reason })));
+
   server.registerTool("set_lifting_plan", {
-    description: "Replace Daniel's lifting plan text (markdown). Read lifting_plan first and send the whole updated text.",
-    inputSchema: { text: z.string(), ...meta },
-  }, async ({ text, author, reason }) => attempt(() => setLiftingPlan(text, { author, reason })));
+    description: "Replace the whole lifting plan (sessions, parts, exercises, block). Read lifting_plan first, change what's needed and send the complete plan back. For a single exercise use update_lifting_exercise.",
+    inputSchema: { plan: z.record(z.string(), z.any()), ...meta },
+  }, async ({ plan, author, reason }) => attempt(() => setLiftingPlan(plan, { author, reason })));
 }
 
 // Stateless Streamable HTTP: a fresh server + transport per request (the SDK's

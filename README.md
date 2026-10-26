@@ -78,6 +78,18 @@ the long run is capped at 40% (30% is impossible with 3 runs); a deload week
 drops runs rather than scheduling any under 20 min; decoupling and quality
 scoring wait for long runs ≥ 60 min and quality sessions.
 
+## Lifting
+
+The lifting plan (settings `lifting_plan`, seeded by `scripts/seed-lifting-plan.js`)
+is the weekly A/B template with a prescription per exercise (load, sets, rep
+range, progression step) and the current lifting block (worked out from JEFIT
+history: the lower-body reset on 28 Sep 2026). `src/lifting/analysis.js`
+classifies each JEFIT session as a plan session, compares every exercise with
+its prescription and the last time, and works out the next target (double
+progression). At 7pm `src/lifting/coach.js` freezes each new session's
+comparison and raises any prescription whose every set hit the top of the range
+at the prescribed load; the nightly coach adds a comment per session.
+
 ## Schedule
 
 The daily service runs at 6am, 9am, 3pm, 7pm and 10pm Melbourne
