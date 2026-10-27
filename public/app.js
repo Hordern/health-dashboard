@@ -31,6 +31,10 @@ const clock = (iso) => new Date(iso).toLocaleTimeString(undefined, { weekday: "s
 
 // A run's plan in minutes, with the km estimate as a guide ("24 min · ≈3.3 km").
 const isRunDay = (d) => d.planned_min || d.planned_km || d.actual_km;
+// A run Garmin has logged but the coach hasn't reviewed yet (reviews run at 7pm).
+const runStatus = (d) => (d.status === "upcoming" && d.actual_min != null ? "logged" : d.status);
+const isUpcomingRun = (d) => (d.planned_min || d.planned_km) && runStatus(d) === "upcoming";
+const RUN_STATUS_COLOR = { done: "--ok", logged: "--ok", flag: "--warn", missed: "--bad" };
 function planText(d) {
   if (d.planned_min) return `${d.planned_min} min${d.planned_km ? ` · ≈${d.planned_km} km` : ""}`;
   return d.planned_km ? `${d.planned_km} km` : "";
@@ -236,10 +240,10 @@ function renderWeek({ weeks, days, blockProgress: bp }) {
         ${asDate(d.date).toLocaleDateString(undefined, { weekday: "short" })}
         <b>${asDate(d.date).getDate()}</b>
         <div class="km">${d.planned_min ? `${d.actual_min ?? d.planned_min}′` : d.actual_km ?? d.planned_km ?? ""}</div>
-        <div class="status ${isRunDay(d) ? d.status : ""}"></div>
+        <div class="status ${isRunDay(d) ? runStatus(d) : ""}"></div>
       </div>`).join("")}</div>`;
 
-  const next = days.find((d) => d.date >= today && (d.planned_min || d.planned_km) && d.status === "upcoming");
+  const next = days.find((d) => d.date >= today && isUpcomingRun(d));
   $("nextCard").innerHTML = `
     <div class="card-head">${label("Next run", "run", "--run")}<span class="when">${next ? relDay(next.date) : ""}</span></div>
     ${next ? `
@@ -260,7 +264,7 @@ function renderPlan({ weeks, days, runningBlock }) {
   if (b) {
     const day = Math.floor((asDate(today) - asDate(b.start)) / 86_400_000) + 1;
     const total = Math.floor((asDate(b.end) - asDate(b.start)) / 86_400_000) + 1;
-    const next = days.find((d) => d.date >= today && (d.planned_min || d.planned_km) && d.status === "upcoming");
+    const next = days.find((d) => d.date >= today && isUpcomingRun(d));
     $("runPlanWhen").innerHTML = `${esc(b.name)} · day ${Math.min(day, total)} of ${total}${next ? ` · next ${asDate(next.date).toLocaleDateString(undefined, { weekday: "short" })} ${next.planned_min ? `${next.planned_min} min` : `${next.planned_km} km`}` : ""} <span class="chev">›</span>`;
     $("blockInfo").innerHTML = `
       <div class="block-info">
@@ -294,7 +298,7 @@ function renderPlan({ weeks, days, runningBlock }) {
         <div class="row-date"><b>${asDate(d.date).toLocaleDateString(undefined, { weekday: "short" })}</b>${fmtShort(d.date)}</div>
         <div class="row-main">
           <div class="row-title">${esc(isRun ? `${d.run_type ?? "Run"} · ${planText(d)}` : "No run")}
-            ${isRun ? `<span class="chip" style="--c: var(${statusColor[d.status] ?? "--muted"})">${d.status}</span>` : ""}</div>
+            ${isRun ? `<span class="chip" style="--c: var(${RUN_STATUS_COLOR[runStatus(d)] ?? "--muted"})">${runStatus(d)}</span>` : ""}</div>
           <div class="row-detail">${esc([d.gym && `Gym: ${d.gym}`, isRun && d.hr_guide, isRun && d.shoe].filter(Boolean).join(" · "))}</div>
           ${comment}
         </div>

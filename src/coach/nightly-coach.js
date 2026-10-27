@@ -41,8 +41,9 @@ async function context(day) {
     readiness: (await query(`select flags, actions from readiness where date = $1`, [day]))[0] ?? null,
     checkins: await query(`select date::text, pain_during, pain_next_morning, rpe, note from checkins where date >= current_date - 7 order by date`),
     plan_this_week_and_next: await query(`select date::text, gym, run_type, planned_km, hr_guide, shoe, status, notes from plan_days where date between current_date - 7 and current_date + 14 order by date`),
-    // Past run days nobody has reviewed yet. Days someone already commented on are left alone.
-    reviewable_days: await query(`select date::text, run_type, planned_km from plan_days where date < $1 and date >= current_date - 7 and planned_km > 0 and status = 'upcoming' order by date`, [day]),
+    // Run days nobody has reviewed yet: past days, plus today once a run is logged.
+    // Days someone already commented on are left alone.
+    reviewable_days: await query(`select date::text, run_type, planned_km from plan_days where (date < $1 or (date = $1 and exists (select 1 from activities a where a.date = plan_days.date and a.type = 'running'))) and date >= current_date - 7 and planned_km > 0 and status = 'upcoming' order by date`, [day]),
     recent_plan_changes: await recentChanges(10),
     activities: await query(`select start_local::text, type, name, distance_km, duration_s, avg_hr, max_hr, elevation_gain_m, training_effect_label
                              from activities where date >= ${since} order by start_local`),
