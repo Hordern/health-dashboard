@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { clearSetting, getSetting, query, setSetting } from "../db.js";
+import { localDate } from "../schedule.js";
 
 const TOKEN_KEY = "garmin_tokens";
 // Set when Garmin rejects the saved session; the dashboard shows a banner while it exists.
@@ -37,7 +38,9 @@ export function runGarminScript(mode, input, { interactive = false, args = [] } 
   });
 }
 
-const isoDaysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+// Days in local time: before 11am in Melbourne the UTC date is still yesterday,
+// so a UTC date would skip this morning's sleep, readiness and body battery.
+const isoDaysAgo = (n) => localDate(new Date(Date.now() - n * 86_400_000));
 const num = (v) => (typeof v === "number" ? v : null);
 
 // Garmin's raw field paths are undocumented; these were checked against the
