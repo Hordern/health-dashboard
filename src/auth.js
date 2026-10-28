@@ -4,7 +4,7 @@
 //   - Passkeys (Face ID / Touch ID / Windows Hello) via WebAuthn. Registering a
 //     new device needs a signed-in session, so the first device signs in with
 //     the PIN once and then adds a passkey.
-//   - COACH_PIN as the fallback (sign-in form, or the X-Coach-Pin header for scripts).
+//   - COACH_PIN as the fallback, with a lockout after repeated wrong PINs.
 //
 // A successful sign-in sets a signed, httpOnly session cookie (SESSION_SECRET)
 // for 30 days. Passkeys are stored in settings 'passkeys'. They're bound to the
@@ -46,6 +46,15 @@ function startSession(res, method) {
   res.cookie(SESSION_COOKIE, sign({ method, exp }), { ...cookieOpts, maxAge: SESSION_DAYS * 86_400_000 });
 }
 
+// Wrong-PIN lockout: 5 misses in 15 minutes locks PIN sign-in for that address.
+const PIN_TRIES = 5, PIN_WINDOW_MS = 15 * 60_000;
+const pinMisses = new Map(); // ip -> [timestamps]
+function pinLocked(ip) {
+  const recent = (pinMisses.get(ip) ?? []).filter((t) => Date.now() - t < PIN_WINDOW_MS);
+  pinMisses.set(ip, recent);
+  return recent.length >= PIN_TRIES;
+}
+
 function pinMatches(given) {
   const pin = process.env.COACH_PIN;
   given = String(given ?? "");
@@ -53,7 +62,6 @@ function pinMatches(given) {
 }
 
 export function isSignedIn(req) {
-  if (pinMatches(req.get("x-coach-pin"))) return true;
   try { return Boolean(unsign(readCookie(req, SESSION_COOKIE))); } catch { return false; }
 }
 
@@ -92,7 +100,11 @@ export function mountAuth(app, express) {
   })));
 
   app.post("/api/auth/pin", json, handle((req, res) => {
-    if (!pinMatches(req.body?.pin)) throw fail(process.env.COACH_PIN ? "Wrong PIN" : "PIN sign-in is off (COACH_PIN not set)");
+    if (pinLocked(req.ip)) throw fail("Too many wrong PINs. Try again in 15 minutes, or use a passkey.", 429);
+    if (!pinMatches(req.body?.pin)) {
+      pinMisses.get(req.ip).push(Date.now());
+      throw fail(process.env.COACH_PIN ? "Wrong PIN" : "PIN sign-in is off (COACH_PIN not set)");
+    }
     startSession(res, "pin");
     return { signed_in: true };
   }));

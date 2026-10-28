@@ -18,6 +18,7 @@ import { mountAuth, requireAuth } from "./auth.js";
 import { ask, closeChat, latestChat } from "./coach/ask.js";
 
 const app = express();
+app.set("trust proxy", 1); // Railway's proxy: req.ip is the visitor (for the PIN lockout)
 
 // Health data is behind a single shared password (any username) when DASHBOARD_PASSWORD is set.
 app.use((req, res, next) => {
