@@ -50,6 +50,7 @@ function gymPlan(routine, names) {
 function toSet(s) {
   return {
     type: s.type,
+    ...(s.date != null && { at: s.date }), // epoch seconds when the set was logged (gives rest times)
     ...(s.weight != null && { weight_kg: toKg(s.weight) }),
     ...(s.reps != null && { reps: s.reps }),
     ...(s.duration != null && { duration_s: s.duration }),

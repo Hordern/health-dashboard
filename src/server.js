@@ -14,6 +14,8 @@ import { localDate, nextSync } from "./schedule.js";
 import { TYPE_LABEL } from "./coach/review.js";
 import { liftingBlock, recentLifting, weekAdherence } from "./lifting/analysis.js";
 import { liftingWorkbook } from "./lifting/workbook.js";
+import { mountAuth, requireAuth } from "./auth.js";
+import { ask, closeChat, latestChat } from "./coach/ask.js";
 
 const app = express();
 
@@ -168,29 +170,31 @@ app.get("/withings/callback", async (req, res, next) => {
 
 mountMcp(app, express); // Claude connector at /mcp/<MCP_KEY>
 
-// Planning chat. The dashboard is public, but these endpoints change the plan and
-// spend Anthropic credit, so they need COACH_PIN (sent by the page as X-Coach-Pin).
-function requirePin(req, res, next) {
-  const pin = process.env.COACH_PIN;
-  const given = req.get("x-coach-pin") ?? "";
-  const ok = pin && given.length === pin.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(pin));
-  if (ok) return next();
-  res.status(401).json({ error: pin ? "Wrong PIN" : "Planning chat is off (COACH_PIN not set)" });
-}
+mountAuth(app, express); // passkey / PIN sign-in, see src/auth.js
+
+// Chats, Sync now and check-ins. The dashboard is public, but these change the
+// plan or spend Anthropic credit, so they need a signed-in session (passkey or PIN).
 const handle = (fn) => async (req, res) => {
   try {
     res.json(await fn(req));
   } catch (err) {
-    console.error("planning chat", err);
+    console.error(req.path, err);
     res.status(400).json({ error: err.message });
   }
 };
-app.use("/api/coach", express.json(), requirePin);
+app.use("/api/coach", express.json(), requireAuth);
 app.get("/api/coach/chat", handle(() => latestOpenChat()));
 app.post("/api/coach/chat", handle(() => startChat()));
 app.post("/api/coach/chat/:id/messages", handle((req) => sendMessage(Number(req.params.id), String(req.body.text ?? "").slice(0, 4000))));
 app.post("/api/coach/chat/:id/lock", handle((req) => lockIn(Number(req.params.id))));
 app.post("/api/coach/sync", handle(() => requestSync()));
+// Ask chats (running coach, lifting coach, Dr). Bigger body limit for screenshots.
+app.get("/api/ask/:topic", requireAuth, handle((req) => latestChat(req.params.topic)));
+app.post("/api/ask/:topic", requireAuth, express.json({ limit: "12mb" }), handle((req) => ask({
+  topic: req.params.topic, id: req.body.id ? Number(req.body.id) : null,
+  text: String(req.body.text ?? "").slice(0, 8000), images: Array.isArray(req.body.images) ? req.body.images : [],
+})));
+app.post("/api/ask/:topic/close", requireAuth, handle((req) => closeChat(req.params.topic)));
 app.post("/api/coach/checkin", handle((req) => {
   const { date = localDate(), pain_during, pain_next_morning, rpe, note } = req.body ?? {};
   const num = (v) => (v === "" || v == null ? undefined : Number(v));

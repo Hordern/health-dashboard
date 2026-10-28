@@ -8,8 +8,10 @@ that gets past Garmin's 2026 anti-bot checks. All database work stays in Node
   import  Reuses an existing local session (default ~/.garminconnect, the one
           the Garmin MCP keeps), checks it works, prints its tokens. Use this
           when Garmin rate-limits fresh logins (429).
-  fetch   Reads {"tokens", "start", "end"} on stdin and prints
-          {"tokens", "activities", "days"}. Tokens are re-printed because the
+  fetch   Reads {"tokens", "start", "end", "have_details"} on stdin and prints
+          {"tokens", "activities", "days", "details"}. `details` holds the full
+          record (laps, HR zones, second-by-second metrics, weather) for each
+          run in the window whose id isn't in `have_details`. Tokens are re-printed because the
           library refreshes them, and the caller must store the new ones.
 """
 
@@ -81,11 +83,34 @@ def fetch():
         })
         d += timedelta(days=1)
 
+    activities = garmin.get_activities_by_date(req["start"], req["end"])
+    have = set(req.get("have_details", []))
+    details = {
+        str(a["activityId"]): run_details(garmin, a["activityId"])
+        for a in activities
+        if a.get("activityType", {}).get("typeKey") in RUN_TYPES and a["activityId"] not in have
+    }
     print(json.dumps({
         "tokens": garmin.client.dumps(),
-        "activities": garmin.get_activities_by_date(req["start"], req["end"]),
+        "activities": activities,
         "days": days,
+        "details": details,
     }))
+
+
+RUN_TYPES = {"running", "trail_running", "treadmill_running", "track_running"}
+
+
+def run_details(garmin, activity_id):
+    """Everything Garmin Connect shows for one run, fetched once per run."""
+    return {
+        "activity": safe(garmin.get_activity, activity_id),
+        "splits": safe(garmin.get_activity_splits, activity_id),
+        "hr_zones": safe(garmin.get_activity_hr_in_timezones, activity_id),
+        "weather": safe(garmin.get_activity_weather, activity_id),
+        # Second-by-second metrics (HR, pace, cadence, elevation…), thinned to ~1000 points.
+        "metrics": safe(garmin.get_activity_details, activity_id, 1000, 0),
+    }
 
 
 if __name__ == "__main__":

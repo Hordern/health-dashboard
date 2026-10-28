@@ -177,12 +177,12 @@ export function forDisplay(chat) {
 }
 
 export async function latestOpenChat() {
-  const [chat] = await query(`select * from coach_chats where status = 'open' order by id desc limit 1`);
+  const [chat] = await query(`select * from coach_chats where topic = 'plan' and status = 'open' order by id desc limit 1`);
   return chat ? forDisplay(chat) : null;
 }
 
 export async function startChat() {
-  await query(`update coach_chats set status = 'closed' where status = 'open'`);
+  await query(`update coach_chats set status = 'closed' where topic = 'plan' and status = 'open'`);
   const [{ id }] = await query(`insert into coach_chats default values returning id`);
   const chat = {
     id, status: "open", proposal: null,
@@ -197,7 +197,7 @@ export async function startChat() {
 }
 
 export async function sendMessage(id, text) {
-  const [chat] = await query(`select * from coach_chats where id = $1 and status = 'open'`, [id]);
+  const [chat] = await query(`select * from coach_chats where id = $1 and topic = 'plan' and status = 'open'`, [id]);
   if (!chat) throw new Error("That chat isn't open any more. Start a new one.");
   chat.messages.push({ role: "user", content: text });
   await runTurn(chat);
@@ -206,7 +206,7 @@ export async function sendMessage(id, text) {
 }
 
 export async function lockIn(id) {
-  const [chat] = await query(`select * from coach_chats where id = $1 and status = 'open'`, [id]);
+  const [chat] = await query(`select * from coach_chats where id = $1 and topic = 'plan' and status = 'open'`, [id]);
   if (!chat?.proposal) throw new Error("There's no proposal to lock in yet.");
   await startBlock(chat.proposal, { author: "Daniel (planning chat)", reason: `Agreed in planning chat #${id}: ${chat.proposal.summary}` });
   await query(`update coach_chats set status = 'locked', block_name = $2 where id = $1`, [id, chat.proposal.name]);

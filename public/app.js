@@ -723,13 +723,8 @@ function renderStatus(status) {
   $("syncNow").onclick = syncNow;
 }
 
-// Sync now (needs the coach PIN), then poll until it's done and reload.
+// Sync now (needs sign-in), then poll until it's done and reload.
 async function syncNow() {
-  if (!storage.get("coachPin")) {
-    const pin = prompt("Coach PIN");
-    if (!pin) return;
-    storage.set("coachPin", pin.trim());
-  }
   try {
     const r = await coachApi("/sync", "POST");
     if (!r.started) return alert(r.reason);
@@ -763,11 +758,6 @@ function renderCheckin(checkins) {
     ${recent.length ? `<div class="caption">${recent.map((r) => `${fmtShort(r.date)}: pain ${r.pain_during ?? "–"}/${r.pain_next_morning ?? "–"}, RPE ${r.rpe ?? "–"}`).join(" · ")}</div>` : ""}`;
   $("checkinForm").onsubmit = async (e) => {
     e.preventDefault();
-    if (!storage.get("coachPin")) {
-      const pin = prompt("Coach PIN");
-      if (!pin) return;
-      storage.set("coachPin", pin.trim());
-    }
     try {
       await coachApi("/checkin", "POST", { date: today, ...Object.fromEntries(new FormData(e.target)) });
       $("checkin").querySelector(".when").textContent = "saved";
@@ -788,38 +778,112 @@ function renderAlerts(alerts) {
     </div>`).join("");
 }
 
-// ---------- Planning chat ----------
-// The PIN is remembered in this browser only; the server checks it on every call.
+// ---------- Sign-in ----------
+// Chats, Sync now and check-ins need a signed-in session: a passkey (Face ID /
+// Touch ID) or the coach PIN. The server keeps the session in an httpOnly cookie
+// for 30 days; the page never stores the PIN.
 
 const storage = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
-  remove: (k) => { try { localStorage.removeItem(k); } catch {} },
 };
+const webauthn = window.SimpleWebAuthnBrowser;
+const canPasskey = () => Boolean(webauthn?.browserSupportsWebAuthn());
 
-async function coachApi(path, method = "GET", body) {
-  const res = await fetch(`/api/coach${path}`, {
-    method,
-    headers: { "Content-Type": "application/json", "X-Coach-Pin": storage.get("coachPin") ?? "" },
-    body: body && JSON.stringify(body),
-  });
+async function postJson(url, body) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) { storage.remove("coachPin"); showPin(data.error); throw new Error(data.error); }
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  if (!res.ok) throw Object.assign(new Error(data.error ?? `Request failed (${res.status})`), { status: res.status });
   return data;
 }
 
-let chatId = null;
-
-function showPin(message) {
-  $("pinForm").hidden = false;
-  $("chatForm").hidden = true;
-  $("chatLog").innerHTML = `<div class="empty">${esc(message ?? "Enter the coach PIN to plan with the coach.")}</div>`;
+async function authStatus() {
+  const s = await (await fetch("/api/auth/status")).json();
+  $("authState").textContent = s.signed_in ? "signed in" : "";
+  return s;
 }
+
+// Resolves once signed in; rejects if Daniel closes the dialog.
+let signInWaiters = [];
+async function ensureSignedIn(message) {
+  const status = await authStatus();
+  if (status.signed_in) return;
+  return new Promise((resolve, reject) => {
+    signInWaiters.push({ resolve, reject });
+    $("signInMsg").textContent = message ?? "Chats, Sync now and check-ins need you to sign in.";
+    $("passkeyLogin").hidden = !(canPasskey() && status.passkeys.length);
+    $("pinLogin").hidden = false;
+    $("addPasskeyBox").hidden = true;
+    if (!$("signIn").open) $("signIn").showModal();
+  });
+}
+function signedIn() {
+  authStatus();
+  signInWaiters.forEach((w) => w.resolve());
+  signInWaiters = [];
+}
+
+function setupSignIn() {
+  $("signInClose").onclick = () => {
+    $("signIn").close();
+    signInWaiters.forEach((w) => w.reject(new Error("Not signed in")));
+    signInWaiters = [];
+  };
+  $("passkeyLogin").onclick = async () => {
+    try {
+      const optionsJSON = await postJson("/api/auth/passkey/login/options");
+      const response = await webauthn.startAuthentication({ optionsJSON });
+      await postJson("/api/auth/passkey/login/verify", { response });
+      $("signIn").close();
+      signedIn();
+    } catch (err) { $("signInMsg").textContent = err.message; }
+  };
+  $("pinLogin").onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await postJson("/api/auth/pin", { pin: $("pinInput").value.trim() });
+      $("pinInput").value = "";
+      // Offer a passkey for next time, unless this device already declined.
+      if (canPasskey() && !storage.get("passkeyDeclined")) {
+        $("passkeyLogin").hidden = $("pinLogin").hidden = true;
+        $("signInMsg").textContent = "";
+        $("addPasskeyBox").hidden = false;
+      } else $("signIn").close();
+      signedIn();
+    } catch (err) { $("signInMsg").textContent = err.message; }
+  };
+  $("addPasskey").onclick = async () => {
+    try {
+      const optionsJSON = await postJson("/api/auth/passkey/register/options");
+      const response = await webauthn.startRegistration({ optionsJSON });
+      const name = /iPhone/.test(navigator.userAgent) ? "iPhone" : /iPad/.test(navigator.userAgent) ? "iPad" : /Mac/.test(navigator.userAgent) ? "Mac" : "This device";
+      await postJson("/api/auth/passkey/register/verify", { response, name });
+      $("signIn").close();
+    } catch (err) { $("signInMsg").textContent = err.message; }
+  };
+  $("skipPasskey").onclick = () => { storage.set("passkeyDeclined", "1"); $("signIn").close(); };
+}
+
+// Calls an API that needs sign-in; asks Daniel to sign in and retries once on 401.
+async function api(url, method = "GET", body) {
+  const call = () => fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body && JSON.stringify(body) });
+  let res = await call();
+  if (res.status === 401) {
+    await ensureSignedIn();
+    res = await call();
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data;
+}
+const coachApi = (path, method, body) => api(`/api/coach${path}`, method, body);
+
+// ---------- Planning chat ----------
+
+let chatId = null;
 
 function renderChat(chat) {
   chatId = chat.id;
-  $("pinForm").hidden = true;
   $("chatForm").hidden = false;
   $("chatLog").innerHTML = chat.turns.map((t) => `<div class="bubble ${t.role}">${t.role === "assistant" ? markdown(t.text) : esc(t.text)}</div>`).join("");
   renderProposal(chat.proposal);
@@ -872,12 +936,14 @@ async function withThinking(fn) {
 async function openPlanner() {
   $("planner").hidden = false;
   $("planner").scrollIntoView({ behavior: "smooth", block: "start" });
-  if (!storage.get("coachPin")) return showPin();
-  $("pinForm").hidden = true;
   try {
+    await ensureSignedIn("Sign in to plan the next block with the coach.");
     const open = await coachApi("/chat");
     if (open) return renderChat(open);
-  } catch { return; }
+  } catch (err) {
+    $("chatLog").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+    return;
+  }
   $("chatLog").innerHTML = "";
   withThinking(() => coachApi("/chat", "POST")); // the coach reviews the history and opens with a proposal
 }
@@ -891,7 +957,6 @@ function setupPlanner() {
     $("proposal").innerHTML = "";
     withThinking(() => coachApi("/chat", "POST"));
   };
-  $("pinForm").onsubmit = (e) => { e.preventDefault(); storage.set("coachPin", $("pinInput").value.trim()); openPlanner(); };
   $("chatForm").onsubmit = (e) => {
     e.preventDefault();
     const text = $("chatInput").value.trim();
@@ -901,6 +966,89 @@ function setupPlanner() {
     withThinking(() => coachApi(`/chat/${chatId}/messages`, "POST", { text }));
   };
   $("chatInput").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("chatForm").requestSubmit(); } };
+}
+
+// ---------- Ask: running coach, lifting coach, Dr ----------
+// One open chat per persona, kept on the server. Screenshots are shrunk in the
+// browser (max 1600 px JPEG) before sending.
+
+const ASK_INTRO = {
+  running: "Your running coach, with every run in full (laps, HR zones, decoupling, strides, form, RPE, weather) and the block.",
+  lifting: "Your lifting coach, with every set, rest time and e1RM trend, your plan and block, and Garmin HR from the gym.",
+  health: "A GP-style look at recovery, sleep, weight and load. Not a doctor; it'll tell you when to see yours.",
+};
+const ask = { topic: storage.get("askTopic") ?? "running", id: null, images: [] };
+
+function renderAsk(chat) {
+  ask.id = chat?.id ?? null;
+  $("askLog").innerHTML = chat?.turns?.length
+    ? chat.turns.map((t) => `<div class="bubble ${t.role}">${t.role === "assistant" ? markdown(t.text) : esc(t.text)}${t.images ? `<div class="img-note">${t.images} screenshot${t.images > 1 ? "s" : ""}</div>` : ""}</div>`).join("")
+    : '<div class="empty">Ask anything, e.g. "How was Tuesday\'s run?" or attach screenshots.</div>';
+  $("askLog").scrollTop = $("askLog").scrollHeight;
+}
+
+async function loadAsk(topic) {
+  ask.topic = topic;
+  storage.set("askTopic", topic);
+  document.querySelectorAll("#askTabs button").forEach((b) => b.classList.toggle("active", b.dataset.topic === topic));
+  $("askIntro").textContent = ASK_INTRO[topic];
+  const status = await authStatus().catch(() => ({}));
+  if (!status.signed_in) return renderAsk(null); // signs in on first send
+  try { renderAsk(await api(`/api/ask/${topic}`)); } catch (err) { $("askLog").innerHTML = `<div class="bubble error">${esc(err.message)}</div>`; }
+}
+
+// Resizes an image file to a JPEG data URL no wider/taller than `max` px.
+function shrinkImage(file, max = 1600) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+function renderThumbs() {
+  $("askThumbs").innerHTML = ask.images.map((src, i) => `<img src="${src}" data-i="${i}" title="Remove" alt="Screenshot ${i + 1}">`).join("");
+}
+
+function setupAsk() {
+  $("askTabs").onclick = (e) => { const b = e.target.closest("button"); if (b) loadAsk(b.dataset.topic); };
+  $("askNew").onclick = async () => {
+    if (!ask.id || !confirm("Start a new chat? This one will be closed.")) return;
+    await api(`/api/ask/${ask.topic}/close`, "POST").catch(() => {});
+    renderAsk(null);
+  };
+  $("askFiles").onchange = async (e) => {
+    for (const f of [...e.target.files].slice(0, 4 - ask.images.length)) ask.images.push(await shrinkImage(f));
+    e.target.value = "";
+    renderThumbs();
+  };
+  $("askThumbs").onclick = (e) => { if (e.target.dataset.i) { ask.images.splice(Number(e.target.dataset.i), 1); renderThumbs(); } };
+  $("askForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const text = $("askInput").value.trim();
+    if (!text && !ask.images.length) return;
+    const images = ask.images;
+    $("askLog").querySelector(".empty")?.remove();
+    $("askLog").insertAdjacentHTML("beforeend", `<div class="bubble user">${esc(text)}${images.length ? `<div class="img-note">${images.length} screenshot${images.length > 1 ? "s" : ""}</div>` : ""}</div>
+      <div class="bubble assistant thinking">Looking at your data…</div>`);
+    $("askLog").scrollTop = $("askLog").scrollHeight;
+    $("askInput").value = ""; ask.images = []; renderThumbs();
+    try {
+      renderAsk(await api(`/api/ask/${ask.topic}`, "POST", { id: ask.id, text, images }));
+    } catch (err) {
+      $("askLog").querySelector(".thinking")?.remove();
+      $("askLog").insertAdjacentHTML("beforeend", `<div class="bubble error">${esc(err.message)}</div>`);
+    }
+  };
+  $("askInput").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("askForm").requestSubmit(); } };
+  loadAsk(ask.topic);
 }
 
 // Highlight the sidebar link for the section currently on screen.
@@ -916,7 +1064,9 @@ function trackSections() {
 
 async function main() {
   trackSections();
+  setupSignIn();
   setupPlanner();
+  setupAsk();
   const res = await fetch("/api/dashboard");
   if (!res.ok) throw new Error(`API returned ${res.status}`);
   const data = await res.json();

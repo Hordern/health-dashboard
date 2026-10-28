@@ -23,6 +23,8 @@ create table if not exists activities (
   raw                   jsonb not null
 );
 create index if not exists activities_date_idx on activities (date);
+-- Full Garmin record for runs (laps, HR zones, per-second metrics, weather), fetched once.
+alter table activities add column if not exists details jsonb;
 
 -- One row per day of Garmin recovery data. Raw payloads are kept so new
 -- fields can be promoted to columns later without re-fetching.
@@ -147,6 +149,8 @@ create table if not exists coach_chats (
   proposal   jsonb,
   block_name text
 );
+-- plan = the "Plan next block" chat; running / lifting / health = the Ask chats (src/coach/ask.js).
+alter table coach_chats add column if not exists topic text not null default 'plan';
 
 -- Coach rules engine (docs/coach-rules.md). Runs are planned in minutes; the km
 -- shown alongside is an estimate from recent easy pace.

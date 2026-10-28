@@ -22,6 +22,7 @@
       <a href="#gym"><span class="dot" style="--c: var(--gym)"></span>Gym</a>
       <a href="#trends"><span class="dot" style="--c: var(--hrv)"></span>Trends</a>
       <a href="#coach"><span class="dot" style="--c: var(--coach)"></span>Coach</a>
+      <a href="#ask"><span class="dot" style="--c: var(--coach)"></span>Ask</a>
     </nav>
     <div class="sidebar-foot" id="syncList"></div>
   </aside>
@@ -132,17 +133,13 @@
       </details>
 
       <!-- Planning chat: opened by "Plan next block". Talk the next block through
-           with the coach, then lock in its proposal. Needs the coach PIN. -->
+           with the coach, then lock in its proposal. Needs sign-in. -->
       <div class="card planner" id="planner" hidden>
         <div class="card-head">
           <span class="label" style="--c: var(--coach)">Plan next block</span>
           <span><button class="icon-btn" id="plannerRestart" title="Start over" aria-label="Start over">↺</button>
             <button class="icon-btn" id="plannerClose" title="Close" aria-label="Close">×</button></span>
         </div>
-        <form id="pinForm" class="chat-form" hidden>
-          <input id="pinInput" type="password" inputmode="numeric" placeholder="Coach PIN" autocomplete="off">
-          <button class="btn" type="submit">Continue</button>
-        </form>
         <div id="chatLog" class="chat-log"></div>
         <div id="proposal"></div>
         <form id="chatForm" class="chat-form" hidden>
@@ -162,11 +159,54 @@
       </details>
     </section>
 
+    <!-- Ask: chat with the running coach, the lifting coach or the Dr about
+         anything in the data, with screenshots. Needs sign-in (passkey or PIN). -->
+    <section id="ask">
+      <h2>Ask</h2>
+      <div class="card ask">
+        <div class="card-head">
+          <div class="tabs" id="askTabs">
+            <button data-topic="running" class="active">Running coach</button>
+            <button data-topic="lifting">Lifting coach</button>
+            <button data-topic="health">Dr</button>
+          </div>
+          <span><span class="muted" id="authState"></span>
+            <button class="icon-btn" id="askNew" title="New chat" aria-label="New chat">↺</button></span>
+        </div>
+        <div class="caption" id="askIntro"></div>
+        <div id="askLog" class="chat-log"></div>
+        <div id="askThumbs" class="thumbs"></div>
+        <form id="askForm" class="chat-form">
+          <label class="icon-btn attach" title="Attach screenshots" aria-label="Attach screenshots">＋<input id="askFiles" type="file" accept="image/*" multiple hidden></label>
+          <textarea id="askInput" rows="2" placeholder="Ask about a run, a session, your recovery…"></textarea>
+          <button class="btn" type="submit">Send</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Sign-in for chats, Sync now and check-ins: passkey (Face ID / Touch ID) or PIN. -->
+    <dialog id="signIn" class="card sign-in">
+      <div class="card-head"><span class="label" style="--c: var(--coach)">Sign in</span>
+        <button class="icon-btn" id="signInClose" aria-label="Close">×</button></div>
+      <p class="caption" id="signInMsg">Chats, Sync now and check-ins need you to sign in.</p>
+      <button class="btn" id="passkeyLogin">Sign in with Face ID / passkey</button>
+      <form id="pinLogin" class="chat-form">
+        <input id="pinInput" type="password" inputmode="numeric" placeholder="or Coach PIN" autocomplete="current-password">
+        <button class="btn" type="submit">Sign in</button>
+      </form>
+      <div id="addPasskeyBox" hidden>
+        <p class="caption">Signed in. Add Face ID / Touch ID on this device so next time it's one tap?</p>
+        <button class="btn" id="addPasskey">Add passkey to this device</button>
+        <button class="btn btn-quiet" id="skipPasskey">Not now</button>
+      </div>
+    </dialog>
+
     <footer class="foot">Built by Daniel Hordern · <a href="https://horderns.com">horderns.com</a> · <a href="https://github.com/Hordern/health-dashboard">source</a></footer>
   </main>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@simplewebauthn/browser@13.3.0/dist/bundle/index.umd.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

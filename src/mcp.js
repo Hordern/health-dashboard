@@ -5,7 +5,6 @@
 // Add either in claude.ai → Settings → Connectors → Add custom connector. The
 // key in the path is the only access control, so treat each URL like a password.
 
-import pg from "pg";
 import * as z from "zod/v4";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -16,33 +15,13 @@ import { recentCheckins, saveCheckin } from "./coach/checkins.js";
 import { getLiftingPlan, liftingBlock, recentLifting } from "./lifting/analysis.js";
 import { LIFT_FIELDS, updateLiftingExercise } from "./plan/store.js";
 
-const MAX_ROWS = 500; // keeps a tool result small enough for Claude's context
+import { MAX_ROWS, SQL_TABLES, readOnlySql } from "./readonly-sql.js";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("YYYY-MM-DD");
 const range = { from: date.describe("Start date, YYYY-MM-DD (inclusive)"), to: date.describe("End date, YYYY-MM-DD (inclusive)") };
 
 const json = (value) => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 const rows = async (sql, params) => json((await query(`${sql} limit ${MAX_ROWS}`, params)));
-
-// Free-form SQL runs as a separate read-only login that has SELECT on the data
-// tables only (no access to `settings`, which holds the Garmin/Withings tokens).
-// See db/readonly.sql. Being its own login, it can't switch back to the owner role.
-let readerPool;
-function reader() {
-  if (!process.env.READONLY_DB_PASSWORD) return null;
-  if (!readerPool) {
-    const url = new URL(process.env.DATABASE_URL);
-    url.username = "dashboard_reader";
-    url.password = process.env.READONLY_DB_PASSWORD;
-    readerPool = new pg.Pool({
-      connectionString: url.toString(),
-      ssl: url.hostname.endsWith(".railway.internal") ? false : { rejectUnauthorized: false },
-      max: 2,
-      statement_timeout: 5000,
-    });
-  }
-  return readerPool;
-}
 
 // Write tools report failures (bad date, missing reason…) back to Claude as a
 // tool error it can read and fix, rather than as a protocol error.
@@ -146,23 +125,13 @@ function buildServer({ canWrite }) {
   }, async ({ from, to }) => rows(`select date::text, body from coaching_notes where date between $1 and $2 order by date`, [from, to]));
 
   server.registerTool("sql_query", {
-    description: `Run one read-only SQL SELECT (PostgreSQL) for questions the other tools don't cover. Tables: activities(date, start_local, type, name, distance_km, duration_s, avg_hr, max_hr, elevation_gain_m, training_effect_label, raw jsonb), health_daily(date, resting_hr, hrv_last_night, hrv_status, readiness_score, readiness_level, acute_load, sleep_score, sleep_s, deep_s, light_s, rem_s, awake_s, raw jsonb), weights(measured_at, weight_kg, fat_ratio, muscle_kg), gym_sessions(date, name, exercises jsonb [{name, record_type, sets:[{type, weight_kg, reps}]}]), plan_weeks(start_date, end_date, label, planned_total_km, summary), plan_days(date, week_start, gym, run_type, planned_min, planned_km, session, hr_guide, shoe, status, notes), coaching_notes(date, body), training_blocks(name, block_type, start_date, end_date, summary, rules, success, active, review jsonb), checkins(date, pain_during, pain_next_morning, rpe, note), readiness(date, flags, actions), plan_changes(at, author, action, target, before, after, reason). Results are capped at ${MAX_ROWS} rows and 5 seconds.`,
+    description: `Run one read-only SQL SELECT (PostgreSQL) for questions the other tools don't cover. Tables: ${SQL_TABLES}. Results are capped at ${MAX_ROWS} rows and 5 seconds.`,
     inputSchema: { sql: z.string().describe("A single SELECT statement") },
   }, async ({ sql }) => {
-    const pool = reader();
-    if (!pool) return { content: [{ type: "text", text: "SQL access isn't set up (READONLY_DB_PASSWORD missing)." }], isError: true };
-    const client = await pool.connect();
     try {
-      await client.query("begin read only");
-      // A named (prepared) statement can only hold one statement, so a query
-      // can't smuggle in a second command after a semicolon.
-      const result = await client.query({ name: `q${Date.now()}`, text: sql });
-      return json({ rows: result.rows.slice(0, MAX_ROWS), truncated: result.rows.length > MAX_ROWS });
+      return json(await readOnlySql(sql));
     } catch (err) {
-      return { content: [{ type: "text", text: `SQL error: ${err.message}` }], isError: true };
-    } finally {
-      await client.query("rollback").catch(() => {});
-      client.release();
+      return { content: [{ type: "text", text: err.message }], isError: true };
     }
   });
 

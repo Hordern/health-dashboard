@@ -12,6 +12,8 @@ import * as z from "zod";
 import { getSetting, query } from "../db.js";
 import { activeBlock, recentChanges, updatePlanDay } from "../plan/store.js";
 import { blockStatus } from "../plan/status.js";
+import { runsBetween } from "./run-analysis.js";
+import { liftSessionDetail } from "../lifting/session-detail.js";
 
 const MODEL = process.env.CLAUDE_MODEL ?? "claude-opus-5-5";
 const AUTHOR = "nightly-coach";
@@ -20,12 +22,12 @@ const Output = z.object({
   note: z.string().describe("Today's coaching note for the dashboard, markdown, under 250 words. If active_block.review exists, explain it."),
   lift_reviews: z.array(z.object({
     session_id: z.string().describe("id of a session in lifting_sessions_to_review"),
-    comment: z.string().describe("Two to four sentences on the session against the plan: what hit target, what progressed, what fell short, and the focus for next time. Facts from plan_check only."),
+    comment: z.string().describe("A coach's review of the session from its full detail, 4–7 sentences: each key lift against its prescription and its recent history (top set, reps, estimated 1RM trend), rep drop-off and rest times, total volume and duration, Garmin HR, anything skipped, and the specific targets for next time."),
   })),
   run_reviews: z.array(z.object({
     date: z.string().describe("YYYY-MM-DD of a past plan day listed in reviewable_days"),
     status: z.enum(["done", "flag", "missed"]).describe("done = as planned; flag = happened but needs attention (over distance, HR well over guide…); missed = didn't happen"),
-    comment: z.string().describe("The coach's comment on that day, one to three sentences, facts from the data"),
+    comment: z.string().describe("A coach's review of the run from its full analysis, 4–7 sentences: minutes vs plan; HR vs the easy guide excluding the finishing hill, and time over it; pacing and HR lap by lap; decoupling; whether the planned strides or session were done (surges); form (cadence, ground contact, stride) vs recent runs; Daniel's RPE and feel vs the data; conditions and what he'd lifted that day; one concrete cue for the next run. If the day has no run, say what was missed."),
   })),
 });
 
@@ -47,12 +49,18 @@ async function context(day) {
     recent_plan_changes: await recentChanges(10),
     activities: await query(`select start_local::text, type, name, distance_km, duration_s, avg_hr, max_hr, elevation_gain_m, training_effect_label
                              from activities where date >= ${since} order by start_local`),
+    // Every run of the last two weeks in full (laps, HR zones, decoupling, surges,
+    // finishing hill, form, RPE/feel, weather): the runs to review and their comparisons.
+    runs_in_detail: await runsBetween(new Date(Date.parse(day) - 14 * 86_400_000).toISOString().slice(0, 10), day),
     health: await query(`select date::text, resting_hr, hrv_last_night, hrv_status, readiness_score, readiness_level, acute_load,
                                 sleep_score, sleep_s, deep_s, rem_s from health_daily where date >= ${since} order by date`),
     weights: await query(`select measured_at::text, weight_kg from weights where measured_at >= ${since} order by measured_at`),
     gym_sessions: await query(`select date::text, name, exercises from gym_sessions where date >= current_date - 14 order by date`),
     // Sessions checked against the lifting plan (by the lifting check) but not yet commented on.
-    lifting_sessions_to_review: await query(`select id, date::text, plan_check from gym_sessions where plan_check is not null and coach_comment is null and date >= current_date - 3 order by date`),
+    // Each with its full detail: every set and rest, volume, e1RM, drop-off, history, Garmin HR.
+    lifting_sessions_to_review: await Promise.all((await query(
+      `select id, date::text, name, exercises, raw, plan_check from gym_sessions where plan_check is not null and coach_comment is null and date >= current_date - 3 order by date`,
+    )).map(async (s) => ({ id: s.id, date: s.date, plan_check: s.plan_check, detail: await liftSessionDetail(s) }))),
     lifting_block: (await getSetting("lifting_plan"))?.block ?? null,
     previous_notes: await query(`select date::text, body from coaching_notes where date >= current_date - 7 order by date`),
   };
@@ -77,8 +85,9 @@ export async function runNightlyCoach() {
     messages: [{
       role: "user",
       content:
-        `Today is ${day}. 1) Review each day in reviewable_days against the Garmin activities and recovery data, ` +
-        `and comment on each session in lifting_sessions_to_review from its plan_check (the lifting plan is double progression; the rules engine already raised any loads). ` +
+        `Today is ${day}. 1) Review each day in reviewable_days using its run in runs_in_detail (everything Garmin recorded, as if you had every screen of the run), ` +
+        `compared with the other runs there and the day's recovery and gym data. Comment on each session in lifting_sessions_to_review from its plan_check and full detail ` +
+        `(the lifting plan is double progression; the rules engine already raised any loads). Be specific and quantitative, like a good coach looking at the data with him. ` +
         `2) Write today's note: what happened since the last note, how recovery looks (readiness flags), and the next planned session. ` +
         `The rules engine decides plan changes (readiness.actions, active_block.review); explain its decisions, don't make your own. ` +
         `Facts come only from the JSON below; say so when data is missing rather than guessing. ` +

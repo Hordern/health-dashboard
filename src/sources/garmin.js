@@ -102,13 +102,15 @@ async function upsert(table, key, row, raw) {
   );
 }
 
-export async function syncGarmin({ days = 3 } = {}) {
+export async function syncGarmin({ days = 3, start = isoDaysAgo(days - 1), end = isoDaysAgo(0) } = {}) {
   const tokens = await getSetting(TOKEN_KEY);
   if (!tokens) throw new Error("Garmin not connected yet — run `npm run garmin:login` locally");
 
   let output;
   try {
-    output = await runGarminScript("fetch", { tokens, start: isoDaysAgo(days - 1), end: isoDaysAgo(0) });
+    // Runs that already have their full details aren't fetched again.
+    const have = await query(`select id from activities where details is not null and date between $1 and $2`, [start, end]);
+    output = await runGarminScript("fetch", { tokens, start, end, have_details: have.map((r) => Number(r.id)) });
   } catch (err) {
     // Flag a dead session so the dashboard shows a sign-in banner (see server.js).
     if (err.exitCode === SIGN_IN_REQUIRED) {
@@ -123,7 +125,11 @@ export async function syncGarmin({ days = 3 } = {}) {
 
   for (const a of result.activities) await upsert("activities", "id", activityRow(a), a);
   for (const d of result.days) await upsert("health_daily", "date", healthRow(d), d);
+  for (const [id, details] of Object.entries(result.details ?? {})) {
+    await query(`update activities set details = $2 where id = $1`, [id, details]);
+  }
 
   const failed = result.days.flatMap((d) => Object.entries(d).filter(([, v]) => v?.error).map(([k]) => `${d.date} ${k}`));
-  return `${result.activities.length} activities, ${result.days.length} days` + (failed.length ? `; failed: ${failed.join(", ")}` : "");
+  const detailed = Object.keys(result.details ?? {}).length;
+  return `${result.activities.length} activities, ${result.days.length} days` + (detailed ? `, ${detailed} run details` : "") + (failed.length ? `; failed: ${failed.join(", ")}` : "");
 }
